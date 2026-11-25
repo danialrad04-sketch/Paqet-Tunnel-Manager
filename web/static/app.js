@@ -20,7 +20,7 @@ function icon(name) {
 }
 document.querySelectorAll("[data-icon]").forEach((el) => { el.innerHTML = icon(el.dataset.icon); });
 const states = {active:"فعال", inactive:"متوقف", failed:"ناموفق", activating:"در حال شروع",
-  deactivating:"در حال توقف", reloading:"در حال بارگذاری"};
+  deactivating:"در حال توقف", reloading:"در حال بارگذاری", unregistered:"بدون سرویس"};
 const roles = {server:"سرور", client:"کلاینت"};
 const pages = {overview:"نمای کلی", tunnels:"تونل‌ها", host:"میزبان"};
 const digits = new Intl.NumberFormat("fa-IR");
@@ -67,6 +67,65 @@ function cell(row, value, tag = "span") {
   row.insertCell().append(element);
   return element;
 }
+const picked = new Set();
+let visibleServices = [];
+let bulkRunning = false;
+
+function renderSelection() {
+  const header = $("#pick-visible");
+  const count = visibleServices.filter((name) => picked.has(name)).length;
+  header.checked = count > 0 && count === visibleServices.length;
+  header.indeterminate = count > 0 && count < visibleServices.length;
+  header.disabled = !visibleServices.length || bulkRunning;
+  $("#bulk-actions").hidden = !picked.size;
+  $("#bulk-count").textContent = digits.format(picked.size) + " تونل انتخاب شده";
+}
+$("#pick-visible").onchange = (event) => {
+  for (const name of visibleServices) {
+    if (event.target.checked) picked.add(name);
+    else picked.delete(name);
+  }
+  render();
+};
+$("#bulk-clear").onclick = () => {
+  picked.clear();
+  render();
+};
+$("#bulk-actions").onsubmit = async (event) => {
+  event.preventDefault();
+  if (bulkRunning || !picked.size) return;
+  const form = event.currentTarget;
+  const action = form.elements.action.value;
+  const names = [...picked];
+  if (action !== "start" && !window.confirm("عملیات روی " + digits.format(names.length) + " تونل اجرا شود؟")) return;
+  bulkRunning = true;
+  for (const control of form.elements) control.disabled = true;
+  render();
+  const result = $("#bulk-result");
+  result.hidden = false;
+  let succeeded = 0;
+  const failures = [];
+  try {
+    for (const [index, name] of names.entries()) {
+      result.textContent = "در حال اجرا · " + digits.format(index + 1) + " / " + digits.format(names.length);
+      try {
+        await api("tunnels/" + name + "/action", {action});
+        succeeded++;
+        picked.delete(name);
+      } catch (error) {
+        failures.push(name + " — " + error.message);
+        if ($("#workspace").hidden) break;
+      }
+    }
+    result.textContent = [digits.format(succeeded) + " موفق", ...failures].join("\n");
+    await refresh();
+  } finally {
+    bulkRunning = false;
+    for (const control of form.elements) control.disabled = false;
+    render();
+  }
+};
+
 function render() {
   const query = $("#query").value.trim().toLowerCase();
   const status = $("#status").value;
@@ -74,10 +133,24 @@ function render() {
   const visible = tunnels.filter((tunnel) =>
     (!query || (tunnel.name + " " + tunnel.endpoint).toLowerCase().includes(query)) &&
     (!status || tunnel.state === status) && (!role || tunnel.role === role));
+  const registered = new Set(tunnels.filter((item) => item.state !== "unregistered").map((item) => item.name));
+  for (const name of picked) if (!registered.has(name)) picked.delete(name);
+  visibleServices = visible.filter((item) => registered.has(item.name)).map((item) => item.name);
   const rows = $("#rows");
   rows.replaceChildren();
   for (const tunnel of visible) {
     const row = rows.insertRow();
+    const pick = cell(row, "", "input");
+    pick.type = "checkbox";
+    pick.checked = picked.has(tunnel.name);
+    pick.disabled = bulkRunning || !registered.has(tunnel.name);
+    pick.setAttribute("aria-label", "انتخاب " + tunnel.name);
+    pick.parentElement.className = "pick";
+    pick.onchange = () => {
+      if (pick.checked) picked.add(tunnel.name);
+      else picked.delete(tunnel.name);
+      renderSelection();
+    };
     const identity = cell(row, "", "div");
     identity.className = "identity";
     const mark = document.createElement("span");
@@ -97,17 +170,112 @@ function render() {
     button.setAttribute("aria-label", "جزئیات " + tunnel.name);
     button.onclick = () => openDetails(tunnel.name);
   }
+  renderSelection();
   $("#count").textContent = visible.length
     ? digits.format(visible.length) + " از " + digits.format(tunnels.length) + " تونل"
     : (tunnels.length ? "تونلی با این فیلترها پیدا نشد." : "هنوز سرویسی ثبت نشده است.");
 }
+const regions = {ir:"ایران", foreign:"خارج"};
+const topologies = {client:"میزبان کلاینت", server:"میزبان سرور", mixed:"میزبان سرور و کلاینت", unknown:"نقش هنوز شناسایی نشده"};
+let currentPage = "overview";
+let latestOverview;
+let previousSample;
+let interfaceRates = {};
+
+function renderIncident() {
+  const bad = tunnels.filter((tunnel) => tunnel.state === "failed");
+  $("#incident").hidden = currentPage !== "overview" || bad.length === 0;
+  $("#incident-title").textContent = digits.format(bad.length) + " سرویس ناموفق";
+  $("#incident-list").textContent = bad.slice(0, 4).map((tunnel) => tunnel.name).join("، ") +
+    (bad.length > 4 ? " و " + digits.format(bad.length - 4) + " مورد دیگر" : "");
+}
+function percent(selector, value) {
+  const valid = Number.isFinite(value) && value >= 0 && value <= 100;
+  $(selector).textContent = valid ? digits.format(Math.round(value)) + "٪" : "—";
+  $(selector + "-meter").value = valid ? value : 0;
+}
+function rate(value) {
+  if (!Number.isFinite(value) || value < 0) return "—";
+  const unit = value >= 1048576 ? ["MiB/s", 1048576] : value >= 1024 ? ["KiB/s", 1024] : ["B/s", 1];
+  return (value / unit[1]).toFixed(unit[1] === 1 ? 0 : 1) + " " + unit[0];
+}
+function renderRates() {
+  const speeds = interfaceRates[$("#sample-interface").value] || [];
+  $("#rx").textContent = rate(speeds[0]);
+  $("#tx").textContent = rate(speeds[1]);
+}
+function renderSample(sample, demo) {
+  $("#telemetry-note").textContent = demo ? "پایش سیستم‌عامل در حالت نمایشی در دسترس نیست."
+    : "نمونه‌برداری هر ۱۰ ثانیه · ترافیک کل رابط انتخابی";
+  const counters = sample.interfaces || {};
+  const memory = sample.memory || {};
+  const seconds = previousSample ? sample.time - previousSample.time : 0;
+  interfaceRates = Object.create(null);
+  if (seconds > 0) {
+    for (const [name, values] of Object.entries(counters)) {
+      const old = previousSample.interfaces?.[name];
+      if (old) interfaceRates[name] = values.map((value, index) => (value - old[index]) / seconds);
+    }
+  }
+  const select = $("#sample-interface");
+  const selection = select.value;
+  const names = Object.keys(counters).sort();
+  select.replaceChildren(...names.map((name) => new Option(name, name)));
+  if (names.includes(selection)) select.value = selection;
+  select.disabled = !names.length;
+  renderRates();
+  const cpu = sample.cpu || [];
+  const previousCpu = previousSample?.cpu || [];
+  const deltas = cpu.map((value, index) => value - previousCpu[index]);
+  const total = deltas.reduce((sum, value) => sum + value, 0);
+  percent("#cpu", total > 0 ? (1 - (deltas[3] + deltas[4]) / total) * 100 : NaN);
+  percent("#memory", memory.MemTotal > 0 ? (1 - memory.MemAvailable / memory.MemTotal) * 100 : NaN);
+  const ready = Boolean(sample.time && (cpu.length || names.length || memory.MemTotal));
+  $("#sample-state").textContent = ready ? "در حال پایش" : "داده در دسترس نیست";
+  $("#sample-state").className = "badge " + (ready ? "active" : "neutral");
+  previousSample = sample;
+}
+$("#sample-interface").addEventListener("change", renderRates);
+$("#show-failed").onclick = () => {
+  $("#status").value = "failed";
+  $("#query").value = $("#role").value = "";
+  selectPage("tunnels");
+  render();
+};
+$("#region-form").elements.region.onchange = (event) => { event.target.dataset.dirty = "true"; };
+$("#region-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("button");
+  button.disabled = true;
+  try {
+    await api("region", {region:form.elements.region.value});
+    delete form.elements.region.dataset.dirty;
+    form.elements.region.blur();
+    await refresh();
+    toast("موقعیت میزبان ذخیره شد.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+};
+
 async function refresh() {
   if (loading) return;
   loading = true;
   $("#refresh").disabled = true;
   try {
     const overview = await api("overview");
+    latestOverview = overview;
     tunnels = overview.tunnels;
+    const topology = topologies[overview.topology] || topologies.unknown;
+    $("#topology").textContent = $("#hero-topology").textContent = topology;
+    $("#hero-region").textContent = regions[overview.region] || "موقعیت تعیین نشده";
+    const region = $("#region-form").elements.region;
+    if (document.activeElement !== region && !region.dataset.dirty) region.value = overview.region || "";
+    renderSample(overview.sample || {}, overview.demo);
+    renderIncident();
     $("#total").textContent = digits.format(tunnels.length);
     for (const state of ["active", "inactive", "failed"]) {
       $("#" + state).textContent = digits.format(tunnels.filter((tunnel) => tunnel.state === state).length);
@@ -128,6 +296,7 @@ async function refresh() {
   }
 }
 function selectPage(page) {
+  currentPage = page;
   for (const item of document.querySelectorAll("[data-page]")) {
     const current = item.dataset.page === page;
     item.classList.toggle("selected", current);
@@ -137,7 +306,8 @@ function selectPage(page) {
   $("#crumb").textContent = pages[page];
   $("#host").hidden = page !== "host";
   $("#tunnels").hidden = page === "host";
-  $("#hero").hidden = $("#metrics").hidden = page !== "overview";
+  $("#hero").hidden = $("#metrics").hidden = $("#telemetry").hidden = page !== "overview";
+  renderIncident();
 }
 
 const create = $("#create-form");
@@ -251,6 +421,35 @@ function renderDetails() {
   $("#detail-name").textContent = selected;
   $("#detail-state").textContent = [roles[tunnel.role], states[tunnel.state] || "نامشخص",
     tunnel.enabled ? "اجرای خودکار روشن" : "اجرای خودکار خاموش"].filter(Boolean).join(" · ");
+  const registered = tunnel.state !== "unregistered";
+  $(".service-actions").hidden = $("#log-head").hidden = $("#logs").hidden = !registered;
+  $("#restore").hidden = !tunnel.backup;
+  $("#diagnostic").hidden = !registered || tunnel.role !== "client" || !tunnel.endpoint;
+  const facts = $("#detail-facts");
+  facts.replaceChildren();
+  for (const [label, value] of [
+    ["آدرس", tunnel.endpoint], ["رابط شبکه", tunnel.interface], ["IPv4 محلی", tunnel.local],
+    ["منبع نقش", {explicit:"نقش ثبت‌شده در YAML",inferred:"استنباط از آدرس پیکربندی",unknown:"نامشخص"}[tunnel.evidence]],
+    ["منبع تنظیمات", {default:"فایل استاندارد",alternate:"مسیر جایگزین در systemd",unresolved:"مسیر قابل تأیید نیست",file:"فایل بدون سرویس"}[tunnel.source]],
+    ["شناسهٔ پردازش", tunnel.pid !== "0" && tunnel.pid],
+    ["تعداد راه‌اندازی مجدد", tunnel.restarts], ["نتیجهٔ systemd", tunnel.result], ["آخرین فعال‌سازی", tunnel.since],
+  ]) {
+    if (!value || value === "n/a") continue;
+    const item = document.createElement("div");
+    const title = document.createElement("dt");
+    const text = document.createElement("dd");
+    title.textContent = label;
+    text.textContent = value;
+    text.dir = "auto";
+    item.append(title, text);
+    facts.append(item);
+  }
+  $("#detail-forwards").hidden = !tunnel.forwards.length;
+  $("#forward-list").replaceChildren(...tunnel.forwards.map((rule) => {
+    const line = document.createElement("li");
+    line.textContent = rule.protocol.toUpperCase() + " · " + rule.listen + " → " + rule.target;
+    return line;
+  }));
   $("#autostart").dataset.action = tunnel.enabled ? "disable" : "enable";
   $("#autostart").textContent = tunnel.enabled ? "خاموش کردن اجرای خودکار" : "روشن کردن اجرای خودکار";
 }
@@ -295,13 +494,14 @@ tuning.addEventListener("toggle", () => {
 });
 function openDetails(name) {
   selected = name;
+  $("#route-result").textContent = "";
   tuning.open = false;
   tuning.hidden = !tunnels.find((tunnel) => tunnel.name === name)?.tunable;
   renderDetails();
   showError("#detail-error");
   $("#logs").textContent = "در حال دریافت گزارش…";
   $("#details").showModal();
-  loadLogs();
+  if (!$("#logs").hidden) loadLogs();
 }
 document.querySelectorAll(".service-actions button").forEach((button) => {
   button.onclick = async () => {
@@ -321,6 +521,37 @@ document.querySelectorAll(".service-actions button").forEach((button) => {
   };
 });
 $("#reload-logs").onclick = loadLogs;
+$("#check-route").onclick = async () => {
+  const name = selected;
+  const button = $("#check-route");
+  button.disabled = true;
+  try {
+    const route = await api("tunnels/" + name + "/diagnose");
+    if (selected !== name) return;
+    const match = route.matches === true ? "مسیر با تنظیمات تونل هم‌خوان است."
+      : route.matches === false ? "رابط یا IP مسیر با تنظیمات تونل فرق دارد." : "پیکربندی رابط برای مقایسه در دسترس نیست.";
+    $("#route-result").textContent = match + "\n" + route.local + " → " + route.next_hop + " → " + route.target + " · " + route.interface;
+  } catch (error) {
+    if (selected === name) $("#route-result").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+};
+$("#restore").onclick = async () => {
+  if (!window.confirm("تنظیمات پیش از آخرین ویرایش KCP بازیابی شود؟ سرویس فعال دوباره راه‌اندازی می‌شود.")) return;
+  const button = $("#restore");
+  button.disabled = true;
+  showError("#detail-error");
+  try {
+    await api("tunnels/" + selected + "/restore", {});
+    await refresh();
+    toast("تنظیمات قبلی بازیابی شد.");
+  } catch (error) {
+    showError("#detail-error", error.message);
+  } finally {
+    button.disabled = false;
+  }
+};
 $("#add-forward").onclick = addForward;
 create.elements.role.onchange = useRole;
 $("#key-dialog").addEventListener("close", () => { $("#key-value").value = ""; });
@@ -341,6 +572,9 @@ document.querySelectorAll("[data-create]").forEach((button) => {
     $("#forward-rows").replaceChildren();
     $("#copy").textContent = "کپی کلید";
     showError("#create-error");
+    if (latestOverview?.region === "ir") create.elements.role.value = "client";
+    else if (latestOverview?.region === "foreign") create.elements.role.value = "server";
+    else if (["client", "server"].includes(latestOverview?.topology)) create.elements.role.value = latestOverview.topology;
     useRole();
     $("#create-dialog").showModal();
   };
@@ -388,3 +622,7 @@ async function init() {
   }
 }
 init();
+
+setInterval(() => {
+  if (!document.hidden && !$("#workspace").hidden) refresh();
+}, 10000);

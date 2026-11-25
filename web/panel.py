@@ -1,5 +1,6 @@
 """Local Paqet administration and isolated UI demo."""
 import argparse
+from copy import deepcopy
 import hashlib
 import hmac
 import ipaddress
@@ -21,6 +22,7 @@ import yaml
 
 CONFIG = Path("/etc/paqet")
 UNITS = Path("/etc/systemd/system")
+STATE = Path("/etc/paqet-panel")
 CORE = Path("/usr/local/bin/paqet")
 STATIC = Path(__file__).resolve().parent / "static"
 NAME = r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}"
@@ -68,14 +70,25 @@ def ipv4(value):
         raise Problem("آدرس IPv4 مقصد معتبر نیست.") from error
 
 
-def network():
-    routes = json.loads(run("ip", "-j", "-4", "route", "show", "default").stdout)
-    route = next((item for item in routes if item.get("gateway") and item.get("dev")), None)
-    if not route:
-        raise Problem("مسیر پیش‌فرض IPv4 پیدا نشد.")
-    device, gateway = route["dev"], route["gateway"]
-    route_to_gateway = json.loads(run("ip", "-j", "-4", "route", "get", gateway).stdout)
-    address = route_to_gateway[0].get("prefsrc") if route_to_gateway else None
+def route_to(target):
+    routes = json.loads(run("ip", "-j", "-4", "route", "get", ipv4(target)).stdout)
+    route = routes[0] if routes else {}
+    if not route.get("dev") or not route.get("prefsrc"):
+        raise Problem("مسیر خروجی IPv4 پیدا نشد.")
+    return {"interface": route["dev"], "local": route["prefsrc"],
+            "next_hop": route.get("gateway", target)}
+
+
+def network(target=None):
+    if target:
+        route = route_to(target)
+    else:
+        defaults = json.loads(run("ip", "-j", "-4", "route", "show", "default").stdout)
+        gateway = next((item["gateway"] for item in defaults if item.get("gateway")), None)
+        if not gateway:
+            raise Problem("مسیر پیش‌فرض IPv4 پیدا نشد.")
+        route = route_to(gateway)
+    device, address, gateway = route["interface"], route["local"], route["next_hop"]
     run("ping", "-c", "1", "-W", "1", gateway, required=False)
     neighbors = json.loads(run("ip", "-j", "neigh", "show", "to", gateway, "dev", device).stdout)
     mac = next((item["lladdr"] for item in neighbors if item.get("lladdr")), None)
@@ -147,22 +160,67 @@ def mapping(value):
     return value if isinstance(value, dict) else {}
 
 
-def summary(name, config, state, enabled):
+def config_role(config):
+    role = config.get("role")
+    if role in ("server", "client"):
+        return role, "explicit"
+    if role is None:
+        server = bool(mapping(config.get("listen")).get("addr"))
+        client = bool(mapping(config.get("server")).get("addr"))
+        if client != server:
+            return ("client" if client else "server"), "inferred"
+    return "unknown", "unknown"
+
+
+def coordinates(rows):
+    roles = {row["role"] for row in rows if row["role"] in ("client", "server")}
+    return next(iter(roles)) if len(roles) == 1 else "mixed" if roles else "unknown"
+
+
+def system_sample():
+    sample = {}
+    for filename, read in {
+        "stat": lambda lines: [int(value) for value in lines[0].split()[1:9]],
+        "meminfo": lambda lines: {line.split(":")[0]: int(line.split()[1]) * 1024 for line in lines
+                                  if line.startswith(("MemTotal:", "MemAvailable:"))},
+        "net/dev": lambda lines: {device.strip(): [int(fields.split()[idx]) for idx in (0, 8)]
+                                   for line in lines[2:] if ":" in line
+                                   for device, fields in [line.split(":", 1)] if device.strip() != "lo"},
+    }.items():
+        try:
+            sample[filename] = read(Path("/proc", filename).read_text().splitlines())
+        except (OSError, ValueError, IndexError):
+            continue
+    return {"cpu": sample.get("stat", []), "memory": sample.get("meminfo", {}),
+            "interfaces": sample.get("net/dev", {}), "time": time.monotonic()}
+
+
+def summary(name, config, state, enabled, properties=None, source="default"):
+    values = properties or {}
     transport = mapping(config.get("transport"))
     kcp = mapping(transport.get("kcp"))
-    endpoint = mapping(config.get("listen") if config.get("role") == "server" else config.get("server"))
-    return {"name": name, "role": str(config.get("role", "unknown")), "state": state,
-            "enabled": enabled, "endpoint": str(endpoint.get("addr", "")),
-            "mode": str(kcp.get("mode", "")),
-            "mtu": str(kcp.get("mtu", "")), "conn": str(transport.get("conn", "")),
-            "tunable": bool(kcp) and config.get("role") in ("server", "client")}
+    role, evidence = config_role(config)
+    endpoint = mapping(config.get("listen" if role == "server" else "server"))
+    network = mapping(config.get("network"))
+    forwards = config.get("forward")
+    forwards = [{"listen": str(rule.get("listen", "")), "target": str(rule.get("target", "")),
+                 "protocol": str(rule.get("protocol", ""))}
+                for rule in forwards[:64] if isinstance(rule, dict)] if isinstance(forwards, list) else []
+    return {"name": name, "role": role, "evidence": evidence, "state": state, "enabled": enabled,
+            "endpoint": str(endpoint.get("addr", "")), "source": source, "forwards": forwards,
+            "interface": str(network.get("interface", "")), "local": str(mapping(network.get("ipv4")).get("addr", "")),
+            "mode": str(kcp.get("mode", "")), "mtu": str(kcp.get("mtu", "")), "conn": str(transport.get("conn", "")),
+            "restarts": values.get("NRestarts", ""), "pid": values.get("MainPID", ""),
+            "result": values.get("Result", ""), "since": values.get("ActiveEnterTimestamp", ""),
+            "tunable": bool(kcp) and evidence == "explicit" and source == "default" and state != "unregistered"}
 
 
 class Manager:
     def __init__(self, demo, panel_port=8765):
         self.demo = demo
         self.panel_port = panel_port
-        self.samples = {}
+        self.samples, self.demo_backups = {}, {}
+        self.demo_region = "ir"
         if demo:
             for name, role, state, address in [
                 ("tehran-edge", "client", "active", "203.0.113.14:443"),
@@ -181,31 +239,104 @@ class Manager:
         return sorted({match.group(1) for line in output.splitlines()
                        if (match := re.match(rf"^paqet-({EXISTING_NAME})\.service\s", line))})
 
-    def config(self, name):
-        path = CONFIG / f"{name}.yaml"
+    def config(self, name, path=None):
+        path = path or CONFIG / f"{name}.yaml"
         try:
             with path.open() as source:
-                return mapping(yaml.safe_load(source.read(262144)))
-        except (OSError, yaml.YAMLError):
+                text = source.read(262145)
+            return mapping(yaml.safe_load(text)) if len(text) <= 262144 else {}
+        except (OSError, UnicodeError, yaml.YAMLError, RecursionError):
             return {}
 
     def inventory(self):
         names = self.names()
         if self.demo:
             return [summary(name, *self.samples[name]) for name in names]
-        rows = []
+        rows = {}
         for offset in range(0, len(names), 100):
-            output = systemctl("show", "-p", "Id,ActiveState,UnitFileState",
-                               *(unit(name) for name in names[offset:offset + 100]),
-                               required=False).stdout
+            output = systemctl("show", "-p",
+                               "Id,ActiveState,UnitFileState,ExecStart,NRestarts,MainPID,Result,ActiveEnterTimestamp",
+                               *(unit(name) for name in names[offset:offset + 100])).stdout
             for block in output.strip().split("\n\n"):
                 values = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
                 match = re.fullmatch(rf"paqet-({EXISTING_NAME})\.service", values.get("Id", ""))
-                if match:
-                    name = match.group(1)
-                    rows.append(summary(name, self.config(name), values.get("ActiveState", "unknown"),
-                                        values.get("UnitFileState") in ("enabled", "enabled-runtime")))
-        return sorted(rows, key=lambda row: row["name"])
+                if not match:
+                    continue
+                name = match.group(1)
+                default = CONFIG / f"{name}.yaml"
+                command = values.get("ExecStart", "")
+                target = re.search(r"(?:^|\s)(?:-c|--config)(?:\s+|=)([^\s;]+)", command)
+                path = Path(target.group(1)) if target else None
+                accessible = path and path.parent == CONFIG and path.suffix in (".yaml", ".yml")
+                source = "default" if path == default else "alternate" if accessible else "unresolved"
+                rows[name] = summary(name, self.config(name, path) if accessible else {},
+                                     values.get("ActiveState", "unknown"),
+                                     values.get("UnitFileState") in ("enabled", "enabled-runtime"), values, source)
+        for path in sorted(CONFIG.glob("*.y*ml")):
+            if path.suffix in (".yaml", ".yml") and re.fullmatch(EXISTING_NAME, path.stem) and path.stem not in rows:
+                config = self.config(path.stem, path)
+                if "role" in config or config_role(config)[0] != "unknown":
+                    rows[path.stem] = summary(path.stem, config, "unregistered", False, source="file")
+        return [rows[name] for name in sorted(rows)]
+
+    def region(self):
+        if self.demo:
+            return self.demo_region
+        try:
+            value = (STATE / "region").read_text().strip()
+        except FileNotFoundError:
+            return ""
+        return value if value in ("ir", "foreign") else ""
+
+    def set_region(self, region):
+        if region not in ("", "ir", "foreign"):
+            raise Problem("موقعیت انتخاب‌شده معتبر نیست.")
+        if self.demo:
+            self.demo_region = region
+        else:
+            atomic(STATE / "region", region + "\n", 0o600)
+
+    def backup_path(self, name):
+        return STATE / "restore-points" / f"{name}.json"
+
+    def has_backup(self, name):
+        return name in self.demo_backups if self.demo else self.backup_path(name).is_file()
+
+    def restore(self, name):
+        if not self.has_backup(name):
+            raise Problem("نقطهٔ بازیابی پیدا نشد.")
+        if self.demo:
+            config, status, enabled = self.samples[name]
+            config["transport"] = self.demo_backups.pop(name)
+            self.samples[name] = (config, status, enabled)
+            return
+        row = next((row for row in self.inventory() if row["name"] == name), {})
+        if not row.get("tunable"):
+            raise Problem("فایل کنونی سرویس برای بازیابی قابل تأیید نیست.")
+        backup = self.backup_path(name)
+        path = CONFIG / f"{name}.yaml"
+        if path.is_symlink():
+            raise Problem("بازیابی فایل پیوندی مجاز نیست.")
+        original = path.read_text()
+        point = json.loads(backup.read_text())
+        if hashlib.sha256(original.encode()).hexdigest() != point.get("updated"):
+            raise Problem("تنظیمات پس از ساخت نقطهٔ بازیابی تغییر کرده است.")
+        atomic(path, point["original"], 0o600)
+        self.apply_change(name, path, original, row["state"] == "active")
+        backup.unlink()
+
+    @staticmethod
+    def apply_change(name, path, original, active):
+        if not active:
+            return
+        try:
+            systemctl("restart", unit(name))
+            time.sleep(0.7)
+            systemctl("is-active", "--quiet", unit(name))
+        except (Problem, subprocess.SubprocessError):
+            atomic(path, original, 0o600)
+            systemctl("restart", unit(name), required=False)
+            raise Problem("اعمال تنظیمات موفق نبود. فایل قبلی بازیابی شد.")
 
     def create(self, data):
         name, port, config = validate(data)
@@ -222,18 +353,17 @@ class Manager:
         config_path = CONFIG / f"{name}.yaml"
         unit_path = UNITS / unit(name)
         names = self.names()
-        if os.path.lexists(config_path) or os.path.lexists(unit_path) or name in names:
+        if os.path.lexists(config_path.with_suffix(".yml")) or os.path.lexists(config_path) or os.path.lexists(unit_path) or name in names:
             raise Problem("این نام قبلاً در تنظیمات یا systemd ثبت شده است.")
         server = config["role"] == "server"
         if server:
             if port == self.panel_port:
                 raise Problem("این پورت برای پنل رزرو شده است.")
-            for existing in names:
-                other = self.config(existing)
-                listen = str(mapping(other.get("listen")).get("addr", ""))
-                if other.get("role") == "server" and listen.rsplit(":", 1)[-1] == str(port):
+            for other in self.inventory():
+                listen = other["endpoint"]
+                if other["role"] == "server" and listen.rsplit(":", 1)[-1] == str(port):
                     raise Problem("این پورت قبلاً برای یک تونل سرور استفاده شده است.")
-        device, address, mac = network()
+        device, address, mac = network(None if server else config["server"]["addr"].rsplit(":", 1)[0])
         config["network"] = {"interface": device, "ipv4": {
             "addr": f"{address}:{port if server else 0}", "router_mac": mac},
             "tcp": {"local_flag": ["PA"]}}
@@ -303,7 +433,8 @@ WantedBy=multi-user.target
         if self.demo:
             config, _, _ = self.samples[name]
         else:
-            if path.is_symlink() or not path.is_file():
+            row = next((row for row in self.inventory() if row["name"] == name), {})
+            if not row.get("tunable") or path.is_symlink() or not path.is_file():
                 raise Problem("فایل تنظیمات این تونل قابل ویرایش نیست.")
             with path.open() as stream:
                 original = stream.read(262145)
@@ -319,23 +450,43 @@ WantedBy=multi-user.target
             raise Problem("پارامترهای KCP این سرویس پیدا نشد.")
         if kcp.get("mode") == "manual" and mode:
             raise Problem("برای تنظیمات دستی، حالت فعلی را نگه دارید.")
+        if self.demo:
+            self.demo_backups[name] = deepcopy(transport)
         if mode:
             kcp["mode"] = mode
         kcp["mtu"] = mtu
         transport["conn"] = conn
         if self.demo:
             return
-        active = systemctl("is-active", unit(name), required=False).stdout.strip() == "active"
-        atomic(path, yaml.safe_dump(config, sort_keys=False), 0o600)
-        if active:
-            try:
-                systemctl("restart", unit(name))
-                time.sleep(0.7)
-                systemctl("is-active", "--quiet", unit(name))
-            except (Problem, subprocess.SubprocessError):
-                atomic(path, original, 0o600)
-                systemctl("restart", unit(name), required=False)
-                raise Problem("اعمال تنظیمات موفق نبود. فایل قبلی بازیابی شد.")
+        backup = self.backup_path(name)
+        backup.parent.mkdir(mode=0o700, exist_ok=True)
+        updated = yaml.safe_dump(config, sort_keys=False)
+        point = {"updated": hashlib.sha256(updated.encode()).hexdigest(), "original": original}
+        old_point = backup.read_text() if backup.is_file() else None
+        atomic(backup, json.dumps(point), 0o600)
+        try:
+            atomic(path, updated, 0o600)
+            self.apply_change(name, path, original, row["state"] == "active")
+        except (OSError, Problem, subprocess.SubprocessError):
+            if old_point is None:
+                backup.unlink(missing_ok=True)
+            else:
+                atomic(backup, old_point, 0o600)
+            raise
+
+    def diagnose(self, name):
+        row = next((row for row in self.inventory() if row["name"] == name), {})
+        if row.get("role") != "client":
+            raise Problem("بررسی مسیر برای تونل کلاینت است.")
+        target = ipv4(row["endpoint"].rsplit(":", 1)[0])
+        if self.demo:
+            return {"target": target, "interface": "eth0", "local": "192.0.2.10",
+                    "next_hop": "192.0.2.1", "matches": None}
+        route = route_to(target)
+        configured = row["local"].rsplit(":", 1)[0]
+        route["matches"] = (route["interface"] == row["interface"] and route["local"] == configured
+                            if row["interface"] and configured else None)
+        return {"target": target, **route}
 
     def logs(self, name):
         if self.demo:
@@ -344,8 +495,13 @@ WantedBy=multi-user.target
                    "-n", "120", "-u", unit(name)).stdout[-CAP:]
 
     def health(self):
+        rows = self.inventory()
+        for row in rows:
+            row["backup"] = row["tunable"] and self.has_backup(row["name"])
         return {"host": "paqet-demo" if self.demo else socket.gethostname(),
-                "core": self.demo or os.access(CORE, os.X_OK), "demo": self.demo}
+                "core": self.demo or os.access(CORE, os.X_OK), "demo": self.demo,
+                "tunnels": rows, "region": self.region(), "topology": coordinates(rows),
+                "sample": {} if self.demo else system_sample()}
 
 
 def accepted_host(host, public_http):
@@ -434,17 +590,22 @@ class Panel(BaseHTTPRequestHandler):
                 self.server.sessions.pop(self.session(), None)
                 self.answer(200, {}, "paqet_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
             elif method == "GET" and path == "/api/overview":
-                self.answer(200, {**manager.health(), "tunnels": manager.inventory()})
+                self.answer(200, manager.health())
+            elif method == "POST" and path == "/api/region":
+                manager.set_region(self.payload().get("region"))
+                self.answer(200, {})
             elif method == "POST" and path == "/api/tunnels":
                 created = manager.create(self.payload())
                 logging.info("Provisioned %s", unit(created["name"]))
                 self.answer(201, created)
-            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune)", path)):
+            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose)", path)):
                 name, operation = match.groups()
                 if name not in manager.names():
                     self.answer(404, {"error": "تونل پیدا نشد."})
                 elif method == "GET" and operation == "logs":
                     self.answer(200, {"logs": manager.logs(name)})
+                elif method == "GET" and operation == "diagnose":
+                    self.answer(200, manager.diagnose(name))
                 elif method == "POST" and operation == "action":
                     action = self.payload().get("action")
                     manager.action(name, action)
@@ -453,6 +614,9 @@ class Panel(BaseHTTPRequestHandler):
                 elif method == "POST" and operation == "tune":
                     manager.tune(name, self.payload())
                     logging.info("Updated KCP settings: %s", unit(name))
+                    self.answer(200, {})
+                elif method == "POST" and operation == "restore":
+                    manager.restore(name)
                     self.answer(200, {})
                 else:
                     self.answer(405, {"error": "روش درخواست مجاز نیست."})
