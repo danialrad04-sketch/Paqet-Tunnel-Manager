@@ -25,6 +25,7 @@ const icons = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   upload: '<path d="M12 15V4m0 0L8 8m4-4 4 4M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
   sliders: '<path d="M4 6h10m4 0h2M4 12h4m4 0h8M4 18h12m4 0h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  code: '<path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-14-2 18"/>',
   play: '<path d="M7 5v14l11-7L7 5Z"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   radar: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="m12 12 6-6"/>',
@@ -54,10 +55,23 @@ $("#theme").onclick = () => {
 };
 
 /* Mobile navigation drawer */
+const mobileLayout = matchMedia("(max-width: 960px)");
 function setMenu(open) {
-  $("#sidebar").classList.toggle("open", open);
+  const drawer = $("#sidebar");
+  const wasOpen = drawer.classList.contains("open");
+  drawer.classList.toggle("open", open);
+  drawer.inert = mobileLayout.matches && !open;
+  $("main").inert = open;
+  $("#menu-open").setAttribute("aria-expanded", String(open));
   $("#scrim").hidden = !open;
+  if (open) $("#menu-close").focus();
+  else if (wasOpen && mobileLayout.matches) $("#menu-open").focus();
 }
+mobileLayout.addEventListener("change", () => setMenu(false));
+setMenu(false);
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && $("#sidebar").classList.contains("open")) setMenu(false);
+});
 $("#menu-open").onclick = () => setMenu(true);
 $("#menu-close").onclick = $("#scrim").onclick = () => setMenu(false);
 
@@ -78,7 +92,7 @@ function confirmAction(text, {ok = "ادامه", danger = false} = {}) {
     $("#confirm-cancel").onclick = () => finish(false);
     dialog.onclose = () => finish(false);
     dialog.showModal();
-    $("#confirm-ok").focus();
+    (danger ? $("#confirm-cancel") : $("#confirm-ok")).focus();
   });
 }
 const states = {active:"فعال", inactive:"متوقف", failed:"ناموفق", activating:"در حال شروع",
@@ -200,6 +214,7 @@ function render() {
   for (const name of picked) if (!registered.has(name)) picked.delete(name);
   visibleServices = visible.filter((item) => registered.has(item.name)).map((item) => item.name);
   const rows = $("#rows");
+  const focused = rows.contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
   rows.replaceChildren();
   for (const tunnel of visible) {
     const row = rows.insertRow();
@@ -216,7 +231,9 @@ function render() {
       row.classList.toggle("is-picked", pick.checked);
       renderSelection();
     };
-    row.ondblclick = () => openDetails(tunnel.name);
+    row.ondblclick = (event) => {
+      if (!event.target.closest("button, input")) openDetails(tunnel.name);
+    };
     const identity = cell(row, "", "div");
     identity.className = "identity " + (tunnel.role || "");
     const mark = document.createElement("span");
@@ -238,6 +255,7 @@ function render() {
     button.setAttribute("aria-label", "جزئیات " + tunnel.name);
     button.onclick = () => openDetails(tunnel.name);
   }
+  if (focused) rows.querySelector('[aria-label="' + CSS.escape(focused) + '"]')?.focus({preventScroll:true});
   renderSelection();
   const filtered = Boolean(query || status || role);
   $("#empty").hidden = visible.length > 0;
@@ -389,7 +407,7 @@ function renderPath(overview, activeCount) {
   const local = overview.region === "ir" ? "ایران" : overview.region === "foreign" ? "خارج" : overview.host;
   $("#path-local").textContent = local || "—";
   const peers = [...new Set(tunnels.filter((tunnel) => tunnel.role === "client" && tunnel.endpoint)
-    .map((tunnel) => tunnel.endpoint.split(":")[0]))];
+    .map((tunnel) => tunnel.endpoint.replace(/:\d+$/, "").replace(/^\[|\]$/g, "")))];
   $("#path-remote").dir = peers.length === 1 ? "ltr" : "auto";
   $("#path-remote").textContent = peers.length === 1 ? peers[0]
     : peers.length > 1 ? digits.format(peers.length) + " سرور"
@@ -517,7 +535,7 @@ function listEntry(list, label, detail) {
 function listButton(row, title, action) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "secondary";
+  button.className = "btn outline sm";
   button.textContent = title;
   button.onclick = async () => {
     button.disabled = true;
@@ -618,8 +636,10 @@ function addForward() {
   if ($("#forward-rows").children.length >= 24) return;
   const row = document.createElement("div");
   row.className = "forward-row";
-  row.innerHTML = '<label>ورودی<input data-field="listen" dir="ltr" type="number" min="1" max="65535" required></label>' +
-    '<label>مقصد<input data-field="target" dir="ltr" type="number" min="1" max="65535" required></label>' +
+  row.innerHTML = '<label>IP ورودی کلاینت<input data-field="listen_ip" dir="ltr" value="0.0.0.0" required></label>' +
+    '<label>پورت ورودی<input data-field="listen" dir="ltr" type="number" min="1" max="65535" required></label>' +
+    '<label>IP مقصد از سمت سرور<input data-field="target_ip" dir="ltr" value="127.0.0.1" required></label>' +
+    '<label>پورت مقصد<input data-field="target" dir="ltr" type="number" min="1" max="65535" required></label>' +
     '<label>پروتکل<select data-field="protocol" dir="ltr"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP/UDP</option></select></label>' +
     '<button type="button" class="btn ghost icon" aria-label="حذف قانون">' + icon("trash") + '</button>';
   row.querySelector("button").onclick = () => row.remove();
@@ -630,6 +650,7 @@ create.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(create));
   delete data["role-pick"];
+  if (peerTransport && data.role === "client") data.transport = peerTransport;
   if (data.role === "client") {
     data.forwards = Array.from($("#forward-rows").children, (row) =>
       Object.fromEntries(Array.from(row.querySelectorAll("[data-field]"), (field) => [field.dataset.field, field.value])));
@@ -724,6 +745,9 @@ function renderDetails() {
     tunnel.enabled ? "اجرای خودکار روشن" : "اجرای خودکار خاموش"].filter(Boolean).join(" · ");
   const registered = tunnel.state !== "unregistered";
   $(".service-actions").hidden = $("#log-head").hidden = $("#logs").hidden = !registered;
+  $("#edit-config").hidden = !tunnel.editable;
+  $("#edit-forward").hidden = $("#edit-config").hidden || tunnel.role !== "client";
+  $("#export-peer").hidden = $("#edit-config").hidden || tunnel.role !== "server";
   $("#restore").hidden = !tunnel.backup;
   $("#refresh-network").hidden = !tunnel.tunable;
   $("#archive-control").hidden = !tunnel.archivable;
@@ -770,6 +794,21 @@ async function loadLogs() {
 }
 const tuning = $("#tuning");
 const tune = $("#tune-form");
+const kcpFields = ["nodelay","interval","resend","nocongestion","rcvwnd","sndwnd","smuxbuf","streambuf",
+  "dshard","pshard","smuxkalive","smuxktimeout","wdelay","acknodelay"];
+for (const key of kcpFields) {
+  const label = document.createElement("label");
+  label.textContent = key;
+  label.className = "field";
+  const boolean = ["wdelay", "acknodelay"].includes(key);
+  const field = document.createElement(boolean ? "select" : "input");
+  field.name = key;
+  field.dir = "ltr";
+  if (boolean) field.append(new Option("پیش‌فرض", ""), new Option("true"), new Option("false"));
+  else { field.type = "number"; field.min = "0"; field.max = "2147483647"; field.placeholder = "پیش‌فرض"; }
+  label.append(field);
+  $("#advanced-kcp").append(label);
+}
 tune.onsubmit = async (event) => {
   event.preventDefault();
   const submit = tune.querySelector("[type=submit]");
@@ -794,6 +833,7 @@ tuning.addEventListener("toggle", () => {
   tune.reset();
   tune.elements.mtu.value = tunnel.mtu || "1350";
   tune.elements.conn.value = tunnel.conn || "1";
+  for (const key of kcpFields) tune.elements[key].value = tunnel.advanced?.[key] ?? "";
 });
 function openDetails(name) {
   selected = name;
@@ -903,6 +943,8 @@ document.querySelectorAll("[data-close]").forEach((button) => {
 document.querySelectorAll("[data-create]").forEach((button) => {
   button.onclick = () => {
     create.reset();
+    peerTransport = undefined;
+    $("#peer-status").textContent = "";
     $("#forward-rows").replaceChildren();
     $("#copy").textContent = "کپی کلید";
     showError("#create-error");
@@ -920,6 +962,7 @@ document.querySelectorAll("[data-page-link]").forEach((button) => {
   button.onclick = () => selectPage(button.dataset.pageLink);
 });
 document.addEventListener("keydown", (event) => {
+  if ($("#sidebar").classList.contains("open")) return;
   if (event.key !== "/" || event.ctrlKey || event.metaKey || document.querySelector("dialog[open]")) return;
   if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName) || $("#workspace").hidden) return;
   event.preventDefault();
@@ -970,3 +1013,105 @@ init();
 setInterval(() => {
   if (!document.hidden && !$("#workspace").hidden) refresh();
 }, 10000);
+
+let peerTransport;
+$("#peer-file").onchange = async (event) => {
+  peerTransport = undefined;
+  $("#peer-status").textContent = "";
+  try {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (file.size > 65536) throw Error("فایل اتصال بزرگ است.");
+    const profile = JSON.parse(await file.text());
+    const kcp = profile.transport?.kcp;
+    if (profile.format !== "paqet-peer-v1" || !kcp?.key) throw Error("فایل اتصال معتبر نیست.");
+    create.elements.port.value = profile.port;
+    create.elements.key.value = kcp.key;
+    create.elements.mode.value = kcp.mode || "fast";
+    create.elements.mtu.value = kcp.mtu || 1350;
+    create.elements.conn.value = profile.transport.conn || 1;
+    peerTransport = profile.transport;
+    $("#peer-status").textContent = "پارامترهای سرور وارد شد. IPv4 عمومی سرور و ورودی‌های کلاینت را مشخص کنید.";
+  } catch (error) { showError("#create-error", error.message); }
+};
+$("#export-peer").onclick = async () => {
+  try {
+    const profile = await api("tunnels/" + selected + "/pair");
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(profile, null, 2)], {type:"application/json"}));
+    link.download = selected + "-peer.json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    toast("فایل اتصال حاوی کلید مشترک است.");
+  } catch (error) { showError("#detail-error", error.message); }
+};
+const yamlForm = $("#yaml-form");
+let yamlRevision;
+function openYaml(name, text, revision) {
+  yamlRevision = revision;
+  yamlForm.elements.name.value = name;
+  yamlForm.elements.name.readOnly = Boolean(revision);
+  yamlForm.elements.yaml.value = text;
+  showError("#yaml-error");
+  $("#yaml-dialog").showModal();
+}
+$("#yaml-dialog").addEventListener("close", () => { yamlForm.reset(); yamlRevision = undefined; });
+$("#open-yaml-create").onclick = () => openYaml("", "", null);
+$("#edit-config").onclick = async () => {
+  const name = selected;
+  try {
+    const result = await api("tunnels/" + name + "/config");
+    if ($("#details").open && name === selected) openYaml(name, result.yaml, result.revision);
+  } catch (error) { showError("#detail-error", error.message); }
+};
+yamlForm.onsubmit = async (event) => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(yamlForm));
+  const button = yamlForm.querySelector("[type=submit]");
+  button.disabled = true;
+  try {
+    const path = yamlRevision ? "tunnels/" + data.name + "/config" : "tunnels";
+    await api(path, {...data, revision:yamlRevision});
+    $("#yaml-dialog").close();
+    await refresh();
+    toast("پیکربندی ذخیره شد.");
+  } catch (error) { showError("#yaml-error", error.message); }
+  finally { button.disabled = false; }
+};
+
+let forwardEdit;
+function editRule(rule = {listen:"0.0.0.0:", target:"127.0.0.1:", protocol:"tcp"}) {
+  const row = document.createElement("div");
+  row.className = "forward-row";
+  row.innerHTML = '<label>ورودی کلاینت (IP:port)<input required dir="ltr" name="listen"></label><label>مقصد از سرور (host:port)<input required dir="ltr" name="target"></label><label>پروتکل<select name="protocol"><option>tcp</option><option>udp</option></select></label><button type="button" class="btn outline sm">حذف قانون</button>';
+  for (const key of ["listen", "target", "protocol"]) row.querySelector("[name="+key+"]").value = rule[key];
+  row.querySelector("button").onclick = () => row.remove();
+  $("#edit-forward-rows").append(row);
+}
+$("#new-forward-rule").onclick = () => editRule();
+$("#edit-forward").onclick = async () => {
+  const name = selected;
+  try {
+    const config = await api("tunnels/" + name + "/config");
+    if (selected !== name || !$("#details").open) return;
+    forwardEdit = {name, revision:config.revision};
+    $("#edit-forward-rows").replaceChildren();
+    for (const rule of config.forwards) editRule(rule);
+    showError("#forward-error");
+    $("#forward-dialog").showModal();
+  } catch (error) { showError("#detail-error", error.message); }
+};
+$("#forward-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const rules = Array.from($("#edit-forward-rows").children, row =>
+    Object.fromEntries(Array.from(row.querySelectorAll("[name]"), field => [field.name, field.value])));
+  const button = event.currentTarget.querySelector("[type=submit]");
+  button.disabled = true;
+  try {
+    await api("tunnels/"+forwardEdit.name+"/forwards", {rules, revision:forwardEdit.revision});
+    $("#forward-dialog").close();
+    await refresh();
+    toast("قوانین انتقال ذخیره شد.");
+  } catch (error) { showError("#forward-error", error.message); }
+  finally { button.disabled = false; }
+};

@@ -559,3 +559,10 @@ pre.terminal{background:var(--terminal);color:#d4d4d8;border-color:#1f1f24;min-h
   *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
   .wire i{display:none}
 }
+
+#yaml-dialog{width:min(760px,calc(100% - 24px))}
+#yaml-form textarea{box-sizing:border-box;width:100%;resize:vertical;min-height:16rem;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:12px;font:13px/1.65 var(--mono)}
+#edit-forward-rows,.forwards{display:grid;gap:12px}
+.forward-row{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px;border:1px solid var(--border);border-radius:8px}
+.forward-row input,.forward-row select{min-width:0;width:100%}
+.error{white-space:pre-wrap;overflow-wrap:anywhere}

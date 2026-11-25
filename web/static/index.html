@@ -96,7 +96,7 @@
 
       <div id="metrics" class="metrics">
         <article class="card metric"><div class="metric-head"><span>همهٔ تونل‌ها</span><span class="metric-icon" data-icon="route"></span></div><strong id="total">—</strong><small class="muted">سرویس ثبت‌شده روی میزبان</small></article>
-        <article class="card metric ok"><div class="metric-head"><span>فعال</span><span class="metric-icon" data-icon="activity"></span></div><strong id="active">—</strong><small class="muted">در حال انتقال ترافیک</small></article>
+        <article class="card metric ok"><div class="metric-head"><span>فعال</span><span class="metric-icon" data-icon="activity"></span></div><strong id="active">—</strong><small class="muted">سرویس در حال اجرا</small></article>
         <article class="card metric warn"><div class="metric-head"><span>متوقف</span><span class="metric-icon" data-icon="pause"></span></div><strong id="inactive">—</strong><small class="muted">آمادهٔ شروع</small></article>
         <article class="card metric bad"><div class="metric-head"><span>ناموفق</span><span class="metric-icon" data-icon="alert"></span></div><strong id="failed">—</strong><small class="muted">نیاز به بررسی گزارش</small></article>
       </div>
@@ -132,6 +132,7 @@
         <div class="card-head">
           <div><h2>تونل‌ها</h2><p class="muted">سرویس‌های Paqet روی این میزبان</p></div>
           <div class="inventory-actions">
+            <button class="btn outline" id="open-yaml-create"><span data-icon="code"></span>ساخت از YAML</button>
             <button id="open-batch" class="btn outline"><span data-icon="upload"></span>راه‌اندازی گروهی</button>
             <button class="btn primary" data-create><span data-icon="plus"></span>افزودن تونل</button>
           </div>
@@ -237,13 +238,22 @@
       <details class="advanced">
         <summary><span data-icon="sliders"></span>تنظیمات پیشرفتهٔ KCP<span class="summary-chevron" data-icon="chevron-down"></span></summary>
         <div class="form-grid">
-          <label class="field">حالت KCP<select name="mode" class="select" dir="ltr"><option>fast</option><option>normal</option><option>fast2</option><option>fast3</option></select></label>
-          <label class="field">MTU<input name="mtu" type="number" min="576" max="1500" value="1350" required dir="ltr"></label>
-          <label class="field">تعداد اتصال KCP<input name="conn" type="number" min="1" max="64" value="1" required dir="ltr"></label>
+          <label class="field">حالت KCP<select name="mode" class="select" dir="ltr"><option>fast</option><option>normal</option><option>fast2</option><option>fast3</option><option>manual</option></select></label>
+          <label class="field">MTU<input name="mtu" type="number" min="50" max="1500" value="1350" required dir="ltr"></label>
+          <label class="field">تعداد اتصال KCP<input name="conn" type="number" min="1" max="256" value="1" required dir="ltr"></label>
         </div>
       </details>
+      <details class="advanced"><summary>تنظیمات انتقال و گزارش</summary><div class="form-grid">
+        <label class="field">رمزنگاری KCP<select name="block"><option value="">پیش‌فرض یا فایل اتصال</option><option>aes</option><option>aes-128-gcm</option><option>aes-128</option><option>aes-192</option><option>salsa20</option><option>blowfish</option><option>twofish</option><option>cast5</option><option>3des</option><option>tea</option><option>xtea</option><option>xor</option><option>sm4</option><option>none</option><option>null</option></select></label>
+        <label class="field">سطح گزارش<select name="level"><option>error</option><option>info</option><option>warn</option><option>debug</option><option>fatal</option><option>none</option></select></label>
+        <label class="field">بافر TCP (بایت)<input name="tcpbuf" type="number" min="0" max="2147483647"></label>
+        <label class="field">بافر UDP (بایت)<input name="udpbuf" type="number" min="0" max="2147483647"></label>
+      </div></details>
       <section id="forwards" class="forwards" hidden>
+        <label class="field">فایل اتصال سرور خارج<input id="peer-file" type="file" accept=".json,application/json"></label>
+        <p class="muted" id="peer-status"></p>
         <label class="field">پورت SOCKS5 روی میزبان محلی<input name="socks" type="number" min="1" max="65535" dir="ltr" placeholder="اختیاری"></label>
+        <div class="form-grid"><label class="field">IPv4 شنود SOCKS5<input name="socks_ip" value="127.0.0.1" dir="ltr"></label><label class="field">کاربر SOCKS5<input name="socks_user"></label><label class="field">رمز SOCKS5<input name="socks_password" type="password" autocomplete="new-password"></label></div>
         <div class="forward-head"><h3>انتقال پورت</h3><button id="add-forward" type="button" class="btn outline sm"><span data-icon="plus"></span>افزودن قانون</button></div>
         <div id="forward-rows"></div>
       </section>
@@ -274,6 +284,7 @@
     <button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button>
   </div>
   <div class="modal-body">
+    <div class="inventory-actions"><button class="btn outline" id="edit-config">ویرایش کامل YAML</button><button class="btn outline" id="edit-forward">ویرایش انتقال پورت</button><button class="btn outline" id="export-peer">دریافت فایل اتصال کلاینت</button></div>
     <div class="service-actions">
       <button class="btn outline sm" data-action="start"><span data-icon="play"></span>شروع</button>
       <button class="btn outline sm" data-action="stop"><span data-icon="stop"></span>توقف</button>
@@ -286,10 +297,11 @@
       <summary><span data-icon="sliders"></span>ویرایش تنظیمات KCP<span class="summary-chevron" data-icon="chevron-down"></span></summary>
       <form id="tune-form">
         <div class="form-grid three">
-          <label class="field">حالت KCP<select name="mode" class="select"><option value="">حفظ حالت فعلی</option><option>normal</option><option>fast</option><option>fast2</option><option>fast3</option></select></label>
-          <label class="field">MTU<input name="mtu" dir="ltr" type="number" min="576" max="1500" required></label>
-          <label class="field">تعداد اتصال<input name="conn" dir="ltr" type="number" min="1" max="64" required></label>
+          <label class="field">حالت KCP<select name="mode" class="select"><option value="">حفظ حالت فعلی</option><option>normal</option><option>fast</option><option>fast2</option><option>fast3</option><option>manual</option></select></label>
+          <label class="field">MTU<input name="mtu" dir="ltr" type="number" min="50" max="1500" required></label>
+          <label class="field">تعداد اتصال<input name="conn" dir="ltr" type="number" min="1" max="256" required></label>
         </div>
+        <details class="advanced"><summary>پارامترهای دستی KCP، بافر و FEC<span class="summary-chevron" data-icon="chevron-down"></span></summary><div class="form-grid" id="advanced-kcp"></div></details>
         <p class="muted hint">اعمال تنظیمات، سرویس فعال را راه‌اندازی مجدد می‌کند.</p>
         <button class="btn primary sm" type="submit">ذخیرهٔ تنظیمات</button>
       </form>
@@ -314,6 +326,19 @@
       </form>
     </details>
   </div>
+</dialog>
+<dialog id="forward-dialog" aria-label="ویرایش انتقال پورت"><form id="forward-form"><div class="modal-head"><h2>قوانین انتقال کلاینت</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div><div class="modal-body">
+       <div id="edit-forward-rows"></div><button type="button" id="new-forward-rule" class="btn outline">افزودن قانون</button><p class="error" id="forward-error" hidden role="alert"></p></div>
+       <div class="modal-foot"><button type="submit" class="btn primary">اعمال قوانین</button></div></form></dialog>
+<dialog id="yaml-dialog" aria-labelledby="yaml-title">
+  <form id="yaml-form">
+    <div class="modal-head"><h2 id="yaml-title">پیکربندی کامل Paqet</h2><button type="button" data-close class="btn ghost icon" aria-label="بستن">×</button></div>
+    <div class="modal-body"><label class="field">نام سرویس<input name="name" required dir="ltr"></label>
+      <label class="field">تنظیمات YAML<textarea name="yaml" dir="ltr" spellcheck="false" required rows="18"></textarea></label>
+      <p class="muted">کلید و رمزها در این فایل هستند. ذخیرهٔ ویرایش، سرویس فعال را دوباره راه‌اندازی می‌کند.</p>
+      <p class="error" id="yaml-error" hidden role="alert"></p></div>
+    <div class="modal-foot"><button class="btn primary" type="submit">ذخیره و اعمال</button><button type="button" data-close class="btn outline">انصراف</button></div>
+  </form>
 </dialog>
 
 <!-- ───────────── Key dialog ───────────── -->
