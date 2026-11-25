@@ -31,7 +31,10 @@ NAME = r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}"
 EXISTING_NAME = r"[a-zA-Z0-9_-]{1,241}"
 MODES = ("normal", "fast", "fast2", "fast3")
 ACTIONS = ("start", "stop", "restart")
-CAP = 32768
+KCP_NUMERIC = ("nodelay", "interval", "resend", "nocongestion", "rcvwnd", "sndwnd",
+               "smuxbuf", "streambuf", "dshard", "pshard", "smuxkalive", "smuxktimeout")
+KCP_BOOLEAN = ("wdelay", "acknodelay")
+CAP = 524288
 
 
 class Problem(Exception):
@@ -44,7 +47,8 @@ def run(*args, required=True):
                                              "LC_ALL": "C", "SYSTEMD_COLORS": "0"})
     if required and result.returncode:
         logging.warning("%s failed with status %s", args[0], result.returncode)
-        raise Problem(f"اجرای {args[0]} ناموفق بود. گزارش سرویس را بررسی کنید.")
+        detail = result.stderr.strip()[-1200:] or f"exit {result.returncode}"
+        raise Problem(f"{args[0]} {args[2] if args[0] == 'systemctl' else ''} — {detail}")
     return result
 
 
@@ -70,6 +74,22 @@ def ipv4(value):
         return str(ipaddress.IPv4Address(value if isinstance(value, str) else ""))
     except ValueError as error:
         raise Problem("آدرس IPv4 مقصد معتبر نیست.") from error
+
+
+def endpoint(value, listener):
+    if not isinstance(value, str):
+        raise Problem("آدرس باید به صورت host:port باشد.")
+    match = re.fullmatch(r"(?:\[([^\]]+)\]|([^:\s/]*)):([0-9]{1,5})", value)
+    if not match:
+        raise Problem("آدرس باید به صورت host:port یا [IPv6]:port باشد.")
+    host = match.group(1) or match.group(2) or ""
+    try:
+        if host or not listener:
+            host = str(ipaddress.ip_address(host))
+    except ValueError:
+        if listener or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host):
+            raise Problem("آدرس ورودی یا مقصد معتبر نیست.")
+    return host, number(match.group(3), 1, 65535, "پورت")
 
 
 def route_to(target):
@@ -117,7 +137,7 @@ def validate(data):
     mode = data.get("mode", "fast")
     if not isinstance(name, str) or not re.fullmatch(NAME, name):
         raise Problem("نام تونل باید ۱ تا ۴۸ نویسهٔ لاتین، عدد، خط تیره یا زیرخط داشته باشد.")
-    if role not in ("server", "client") or mode not in MODES:
+    if role not in ("server", "client") or mode not in (*MODES, "manual"):
         raise Problem("نقش یا حالت KCP معتبر نیست.")
     port = number(data.get("port"), 1, 65535, "پورت تانل")
     key = data.get("key", "")
@@ -126,9 +146,9 @@ def validate(data):
     if not isinstance(key, str) or not 8 <= len(key) <= 128 or not key.isprintable() or key != key.strip():
         raise Problem("کلید مشترک باید ۸ تا ۱۲۸ نویسهٔ قابل چاپ داشته باشد.")
     kcp = {"key": key, "mode": mode, "block": "aes",
-           "mtu": number(data.get("mtu", 1350), 576, 1500, "MTU")}
+           "mtu": number(data.get("mtu", 1350), 50, 1500, "MTU")}
     config = {"role": role, "log": {"level": "error"}, "transport": {
-        "protocol": "kcp", "conn": number(data.get("conn", 1), 1, 64, "اتصال KCP"), "kcp": kcp}}
+        "protocol": "kcp", "conn": number(data.get("conn", 1), 1, 256, "اتصال KCP"), "kcp": kcp}}
     if role == "server":
         config["listen"] = {"addr": f":{port}"}
     else:
@@ -143,18 +163,42 @@ def validate(data):
                 raise Problem("پروتکل انتقال پورت معتبر نیست.")
             listen = number(rule.get("listen"), 1, 65535, "پورت ورودی")
             target = number(rule.get("target"), 1, 65535, "پورت مقصد")
+            bind = ipv4(rule.get("listen_ip", "0.0.0.0"))
+            destination = ipv4(rule.get("target_ip", "127.0.0.1"))
             protocols = ("tcp", "udp") if rule["protocol"] == "both" else (rule["protocol"],)
             for protocol in protocols:
-                if (listen, protocol) in seen:
+                if any(p == listen and proto == protocol and (addr == bind or "0.0.0.0" in (addr, bind))
+                       for addr, p, proto in seen):
                     raise Problem("قانون انتقال پورت تکراری است.")
-                seen.add((listen, protocol))
-                config["forward"].append({"listen": f"0.0.0.0:{listen}",
-                                          "target": f"127.0.0.1:{target}", "protocol": protocol})
+                seen.add((bind, listen, protocol))
+                config["forward"].append({"listen": f"{bind}:{listen}",
+                                          "target": f"{destination}:{target}", "protocol": protocol})
         socks = data.get("socks", "")
         if socks != "":
-            config["socks5"] = [{"listen": f"127.0.0.1:{number(socks, 1, 65535, 'SOCKS5')}"}]
+            config["socks5"] = [{"listen": f"{ipv4(data.get('socks_ip', '127.0.0.1'))}:{number(socks, 1, 65535, 'SOCKS5')}"}]
+            if data.get("socks_user") or data.get("socks_password"):
+                if not all(isinstance(data.get(k), str) and data[k] for k in ("socks_user", "socks_password")):
+                    raise Problem("نام کاربری و رمز SOCKS5 را با هم وارد کنید.")
+                config["socks5"][0].update(username=data["socks_user"], password=data["socks_password"])
         if not config["forward"] and "socks5" not in config:
             raise Problem("برای کلاینت یک قانون انتقال پورت یا پورت SOCKS5 وارد کنید.")
+    if data.get("transport") is not None:
+        imported = mapping(data["transport"])
+        if imported.get("protocol") != "kcp" or not isinstance(imported.get("kcp"), dict):
+            raise Problem("تنظیمات انتقال فایل جفت‌سازی معتبر نیست.")
+        config["transport"] = deepcopy(imported)
+        config["transport"]["kcp"].update(key=key, mode=mode, mtu=kcp["mtu"])
+        config["transport"]["conn"] = number(data.get("conn", 1), 1, 256, "اتصال KCP")
+    if data.get("block"):
+        config["transport"]["kcp"]["block"] = data["block"]
+    if data.get("level"):
+        config["log"]["level"] = data["level"]
+    for key in ("tcpbuf", "udpbuf"):
+        if data.get(key):
+            value = str(data[key])
+            if not re.fullmatch(r"[0-9]{1,10}", value) or int(value) > 2147483647:
+                raise Problem("اندازه بافر معتبر نیست.")
+            config["transport"][key] = int(value)
     return name, port, config
 
 
@@ -212,10 +256,11 @@ def summary(name, config, state, enabled, properties=None, source="default"):
     forwards = config.get("forward")
     forwards = [{"listen": str(rule.get("listen", "")), "target": str(rule.get("target", "")),
                  "protocol": str(rule.get("protocol", ""))}
-                for rule in forwards[:64] if isinstance(rule, dict)] if isinstance(forwards, list) else []
+                for rule in forwards[:256] if isinstance(rule, dict)] if isinstance(forwards, list) else []
     return {"name": name, "role": role, "evidence": evidence, "state": state, "enabled": enabled,
             "endpoint": str(endpoint.get("addr", "")), "source": source, "forwards": forwards,
             "interface": str(network.get("interface", "")), "local": str(mapping(network.get("ipv4")).get("addr", "")),
+            "advanced": {field: kcp[field] for field in (*KCP_NUMERIC, *KCP_BOOLEAN) if field in kcp},
             "mode": str(kcp.get("mode", "")), "mtu": str(kcp.get("mtu", "")), "conn": str(transport.get("conn", "")),
             "restarts": values.get("NRestarts", ""), "pid": values.get("MainPID", ""),
             "result": values.get("Result", ""), "since": values.get("ActiveEnterTimestamp", ""),
@@ -236,13 +281,16 @@ class Manager:
                 ("office-relay", "client", "failed", "198.51.100.27:443"),
             ]:
                 config = {"role": role, "listen" if role == "server" else "server": {"addr": address},
-                          "transport": {"conn": 1, "kcp": {"mode": "fast", "mtu": 1350}}}
+                          "transport": {"protocol": "kcp", "conn": 1, "kcp": {"key": "example-demo-key", "block": "aes", "mode": "fast", "mtu": 1350}}}
+                if role == "client":
+                    config["socks5"] = [{"listen": "127.0.0.1:1080"}]
                 self.samples[name] = (config, state, state != "inactive")
 
     def names(self):
         if self.demo:
             return sorted(self.samples)
-        output = systemctl("list-unit-files", "paqet-*.service", "--no-legend").stdout
+        # A pattern with no matching unit can return a failure on older systemd.
+        output = systemctl("list-unit-files", "--type=service", "--no-legend").stdout
         return sorted({match.group(1) for line in output.splitlines()
                        if (match := re.match(rf"^paqet-({EXISTING_NAME})\.service\s", line))})
 
@@ -280,6 +328,7 @@ class Manager:
                                      values.get("ActiveState", "unknown"),
                                      values.get("UnitFileState") in ("enabled", "enabled-runtime"), values, source)
                 fragment = UNITS / unit(name)
+                rows[name]["config_file"] = path.name if accessible and path.is_file() and not path.is_symlink() else ""
                 rows[name]["archivable"] = (
                     source == "default" and default.is_file() and not default.is_symlink()
                     and values.get("FragmentPath") == str(fragment) and fragment.is_file()
@@ -288,13 +337,15 @@ class Manager:
                     and rows[name]["state"] in ("active", "inactive", "failed"))
         references = Counter(config_references.values())
         for name, row in rows.items():
-            if row["archivable"] and references[config_references[name]] != 1:
+            if references[config_references[name]] != 1:
                 row["archivable"] = False
+                row["config_file"] = ""
         for path in sorted(CONFIG.glob("*.y*ml")):
-            if path.suffix in (".yaml", ".yml") and re.fullmatch(EXISTING_NAME, path.stem) and path.stem not in rows:
+            if path.suffix in (".yaml", ".yml") and re.fullmatch(EXISTING_NAME, path.stem) and path.stem not in rows and path.resolve() not in references:
                 config = self.config(path.stem, path)
                 if "role" in config or config_role(config)[0] != "unknown":
                     rows[path.stem] = summary(path.stem, config, "unregistered", False, source="file")
+                    rows[path.stem]["config_file"] = path.name if not path.is_symlink() else ""
         return [rows[name] for name in sorted(rows)]
 
     def region(self):
@@ -329,10 +380,10 @@ class Manager:
             self.samples[name] = (config, status, enabled)
             return
         row = next((row for row in self.inventory() if row["name"] == name), {})
-        if not row.get("tunable"):
+        if not row.get("config_file"):
             raise Problem("فایل کنونی سرویس برای بازیابی قابل تأیید نیست.")
         backup = self.backup_path(name)
-        path = CONFIG / f"{name}.yaml"
+        path = self.editor_path(name)
         if path.is_symlink():
             raise Problem("بازیابی فایل پیوندی مجاز نیست.")
         original = path.read_text()
@@ -351,13 +402,23 @@ class Manager:
             systemctl("restart", unit(name))
             time.sleep(0.7)
             systemctl("is-active", "--quiet", unit(name))
-        except (Problem, subprocess.SubprocessError):
+        except (Problem, subprocess.SubprocessError) as error:
+            detail = Manager.failure_detail(name, error)
             atomic(path, original, 0o600)
             systemctl("restart", unit(name), required=False)
-            raise Problem("اعمال تنظیمات موفق نبود. فایل قبلی بازیابی شد.")
+            raise Problem("فایل قبلی بازیابی شد. " + detail) from error
 
     def create(self, data):
-        name, port, config = validate(data)
+        if "yaml" in data:
+            name = data.get("name", "")
+            if not isinstance(name, str) or not re.fullmatch(NAME, name):
+                raise Problem("نام تونل معتبر نیست.")
+            config = self.parse_configuration(data["yaml"])
+            side = mapping(config.get("listen") if config.get("role") == "server" else config.get("server"))
+            port = number(str(side.get("addr", "")).rsplit(":", 1)[-1], 1, 65535, "پورت")
+        else:
+            name, port, config = validate(data)
+        self.check_configuration(name, config)
         result = {"name": name}
         if config["role"] == "server":
             result["key"] = config["transport"]["kcp"]["key"]
@@ -381,12 +442,13 @@ class Manager:
                 listen = other["endpoint"]
                 if other["role"] == "server" and listen.rsplit(":", 1)[-1] == str(port):
                     raise Problem("این پورت قبلاً برای یک تونل سرور استفاده شده است.")
-        device, address, mac = network(None if server else config["server"]["addr"].rsplit(":", 1)[0])
-        config["network"] = {"interface": device, "ipv4": {
-            "addr": f"{address}:{port if server else 0}", "router_mac": mac},
-            "tcp": {"local_flag": ["PA"]}}
-        if not server:
-            config["network"]["tcp"]["remote_flag"] = ["PA"]
+        if not config.get("network"):
+            device, address, mac = network(None if server else config["server"]["addr"].rsplit(":", 1)[0])
+            config["network"] = {"interface": device, "ipv4": {
+                "addr": f"{address}:{port if server else 0}", "router_mac": mac},
+                "tcp": {"local_flag": ["PA"]}}
+            if not server:
+                config["network"]["tcp"]["remote_flag"] = ["PA"]
         hooks = ""
         if server:
             helper = "/opt/paqet-panel/packet-rules.sh"
@@ -394,8 +456,7 @@ class Manager:
                      f"ExecStopPost={helper} remove {name} {port}\n")
         definition = f"""[Unit]
 Description=Paqet Tunnel ({name})
-Wants=network-online.target
-After=network-online.target
+After=network.target
 
 [Service]
 Type=exec
@@ -415,7 +476,8 @@ WantedBy=multi-user.target
             systemctl("enable", "--now", unit(name))
             time.sleep(0.7)
             systemctl("is-active", "--quiet", unit(name))
-        except (OSError, Problem, subprocess.SubprocessError):
+        except (OSError, Problem, subprocess.SubprocessError) as error:
+            detail = self.failure_detail(name, error)
             if unit_path.exists():
                 try:
                     systemctl("disable", "--now", unit(name), required=False)
@@ -424,8 +486,109 @@ WantedBy=multi-user.target
                 unit_path.unlink(missing_ok=True)
             config_path.unlink(missing_ok=True)
             systemctl("daemon-reload", required=False)
-            raise Problem("راه‌اندازی تونل موفق نبود. گزارش همین سرویس را در journalctl بررسی کنید.")
+            raise Problem(detail) from error
         return result
+
+    @staticmethod
+    def failure_detail(name, error):
+        try:
+            lines = run("journalctl", "-q", "--no-pager", "-n", "8", "-o", "cat", "-u", unit(name),
+                        required=False).stdout.strip()[-1800:]
+        except (OSError, subprocess.SubprocessError):
+            lines = ""
+        return f"{unit(name)} — {error}\n{lines}".strip()
+
+    def editor_path(self, name):
+        row = next((r for r in self.inventory() if r["name"] == name), {})
+        filename = row.get("config_file")
+        if not filename or Path(filename).name != filename:
+            raise Problem("مسیر فایل مستقل این تونل تأیید نشد.")
+        path = CONFIG / filename
+        if path.is_symlink() or not path.is_file():
+            raise Problem("فایل تنظیمات در دسترس نیست.")
+        return path
+
+    def full_config(self, name):
+        if self.demo:
+            if name not in self.samples:
+                raise Problem("تونل پیدا نشد.")
+            text = yaml.safe_dump(self.samples[name][0], sort_keys=False)
+        else:
+            path = self.editor_path(name)
+            with path.open() as source:
+                text = source.read(262145)
+            if len(text.encode()) > 262144:
+                raise Problem("حجم تنظیمات بیشتر از ۲۵۶ کیلوبایت است.")
+        return {"yaml": text, "forwards": mapping(yaml.safe_load(text)).get("forward") or [], "revision": hashlib.sha256(text.encode()).hexdigest()}
+
+    def replace_config(self, name, data):
+        current = self.full_config(name)
+        if data.get("revision") != current["revision"]:
+            raise Problem("فایل تغییر کرده است. تنظیمات را دوباره باز کنید.")
+        text = data.get("yaml")
+        new = self.parse_configuration(text)
+        old = mapping(yaml.safe_load(current["yaml"]))
+        if new.get("role") != old.get("role"):
+            raise Problem("برای تغییر نقش، سرویس جدید ایجاد کنید.")
+        self.check_configuration(name, new)
+        if self.demo:
+            config, state, enabled = self.samples[name]
+            self.demo_backups[name] = deepcopy(config)
+            self.samples[name] = (new, state, enabled)
+        else:
+            active = systemctl("is-active", unit(name), required=False).stdout.strip() == "active"
+            self.save_config(name, self.editor_path(name), current["yaml"], new, active, text)
+
+    @staticmethod
+    def parse_configuration(text):
+        if not isinstance(text, str) or len(text.encode()) > 262144:
+            raise Problem("حجم فایل YAML معتبر نیست.")
+        try:
+            if any(isinstance(token, yaml.tokens.AliasToken) for token in yaml.scan(text)):
+                raise Problem("ارجاع YAML مجاز نیست.")
+            return mapping(yaml.safe_load(text))
+        except (yaml.YAMLError, RecursionError) as error:
+            raise Problem("ساختار YAML معتبر نیست.") from error
+
+    def check_configuration(self, name, new):
+        role = new.get("role")
+        if role not in ("client", "server"):
+            raise Problem("نقش باید client یا server باشد.")
+        transport = mapping(new.get("transport"))
+        if transport.get("protocol") != "kcp" or not isinstance(mapping(transport.get("kcp")).get("key"), str) or not transport["kcp"]["key"]:
+            raise Problem("پروتکل KCP و کلید مشترک لازم است.")
+        if role == "server":
+            _, port = endpoint(mapping(new.get("listen")).get("addr"), True)
+            if port == self.panel_port:
+                raise Problem("پورت پنل رزرو شده است.")
+            if any(r["name"] != name and r["role"] == "server" and r["endpoint"].rsplit(":",1)[-1] == str(port)
+                   for r in self.inventory()):
+                raise Problem("این پورت در تنظیمات سرور دیگری استفاده شده است.")
+        else:
+            if not mapping(new.get("server")).get("addr") or not (new.get("forward") or new.get("socks5")):
+                raise Problem("آدرس سرور و دست‌کم یک forward یا socks5 لازم است.")
+            endpoint(mapping(new.get("server")).get("addr"), False)
+            for key in ("forward", "socks5"):
+                if key in new and not isinstance(new[key], list):
+                    raise Problem(f"{key} باید فهرست باشد.")
+            listeners = []
+            for group in ("forward", "socks5"):
+                for rule in new.get(group) or []:
+                    if not isinstance(rule, dict):
+                        raise Problem("قالب قانون انتقال یا SOCKS5 معتبر نیست.")
+                    protocol = rule.get("protocol") if group == "forward" else "tcp"
+                    if protocol not in ("tcp", "udp"):
+                        raise Problem("پروتکل باید tcp یا udp باشد.")
+                    bind, port = endpoint(rule.get("listen"), True)
+                    if group == "forward":
+                        endpoint(rule.get("target"), False)
+                    if port == self.panel_port and protocol == "tcp":
+                        raise Problem("پورت ورودی با پورت پنل تداخل دارد.")
+                    for other, used_port, used_protocol in listeners:
+                        if used_port == port and used_protocol == protocol and (
+                                bind == other or bind in ("", "::", "0.0.0.0") or other in ("", "::", "0.0.0.0")):
+                            raise Problem("آدرس ورودی و پروتکل تکراری است.")
+                    listeners.append((bind, port, protocol))
 
     def action(self, name, action):
         if action not in (*ACTIONS, "enable", "disable"):
@@ -442,19 +605,33 @@ WantedBy=multi-user.target
 
     def tune(self, name, data):
         mode = data.get("mode")
-        if mode not in MODES and mode != "":
+        if mode not in (*MODES, "manual", ""):
             raise Problem("حالت KCP معتبر نیست.")
-        mtu = number(data.get("mtu"), 576, 1500, "MTU")
-        conn = number(data.get("conn"), 1, 64, "اتصال KCP")
+        mtu = number(data.get("mtu"), 50, 1500, "MTU")
+        conn = number(data.get("conn"), 1, 256, "اتصال KCP")
         path, original, config, active = self.editable_config(name)
         transport = mapping(config.get("transport"))
         kcp = mapping(transport.get("kcp"))
         if not kcp or config.get("role") not in ("server", "client"):
             raise Problem("پارامترهای KCP این سرویس پیدا نشد.")
-        if kcp.get("mode") == "manual" and mode:
-            raise Problem("برای تنظیمات دستی، حالت فعلی را نگه دارید.")
+        changes = {}
+        for field in KCP_NUMERIC:
+            if field in data and data[field] != "":
+                raw = str(data[field])
+                if not re.fullmatch(r"[0-9]{1,10}", raw) or int(raw) > 2147483647:
+                    raise Problem(f"مقدار {field} معتبر نیست.")
+                changes[field] = int(raw)
+        for field in KCP_BOOLEAN:
+            if field in data and data[field] != "":
+                if data[field] not in ("true", "false"):
+                    raise Problem(f"مقدار {field} معتبر نیست.")
+                changes[field] = data[field] == "true"
         if self.demo:
             self.demo_backups[name] = deepcopy(config)
+        for field in (*KCP_NUMERIC, *KCP_BOOLEAN):
+            if data.get(field) == "":
+                kcp.pop(field, None)
+        kcp.update(changes)
         if mode:
             kcp["mode"] = mode
         kcp["mtu"] = mtu
@@ -505,10 +682,10 @@ WantedBy=multi-user.target
         if not self.demo:
             self.save_config(name, path, original, config, active)
 
-    def save_config(self, name, path, original, config, active):
+    def save_config(self, name, path, original, config, active, text=None):
         backup = self.backup_path(name)
         backup.parent.mkdir(mode=0o700, exist_ok=True)
-        updated = yaml.safe_dump(config, sort_keys=False)
+        updated = text if text is not None else yaml.safe_dump(config, sort_keys=False)
         point = {"updated": hashlib.sha256(updated.encode()).hexdigest(), "original": original}
         old_point = backup.read_text() if backup.is_file() else None
         atomic(backup, json.dumps(point), 0o600)
@@ -691,7 +868,8 @@ WantedBy=multi-user.target
     def health(self):
         rows = self.inventory()
         for row in rows:
-            row["backup"] = row["tunable"] and self.has_backup(row["name"])
+            row["editable"] = self.demo or bool(row.get("config_file"))
+            row["backup"] = row["editable"] and self.has_backup(row["name"])
         return {"host": "paqet-demo" if self.demo else socket.gethostname(),
                 "core": self.demo or os.access(CORE, os.X_OK), "demo": self.demo,
                 "tunnels": rows, "region": self.region(), "topology": coordinates(rows),
@@ -804,10 +982,33 @@ class Panel(BaseHTTPRequestHandler):
                 created = manager.create(self.payload())
                 logging.info("Provisioned %s", unit(created["name"]))
                 self.answer(201, created)
-            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network)", path)):
+            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network|config|pair|forwards)", path)):
                 name, operation = match.groups()
-                if name not in manager.names():
+                if operation not in ("config", "forwards", "pair", "restore") and name not in manager.names():
                     self.answer(404, {"error": "تونل پیدا نشد."})
+                elif operation == "config" and method == "GET":
+                    self.answer(200, manager.full_config(name))
+                elif operation == "forwards" and method == "POST":
+                    edit = self.payload()
+                    current = manager.full_config(name)
+                    config = manager.parse_configuration(current["yaml"])
+                    if config.get("role") != "client":
+                        raise Problem("انتقال پورت روی کلاینت تعریف می‌شود.")
+                    rules = edit.get("rules")
+                    if not isinstance(rules, list) or len(rules) > 256:
+                        raise Problem("قوانین انتقال معتبر نیستند.")
+                    config["forward"] = rules
+                    manager.replace_config(name, {"revision": edit.get("revision"), "yaml": yaml.safe_dump(config, sort_keys=False)})
+                    self.answer(200, {})
+                elif operation == "config" and method == "POST":
+                    manager.replace_config(name, self.payload())
+                    self.answer(200, {})
+                elif operation == "pair" and method == "GET":
+                    config = mapping(yaml.safe_load(manager.full_config(name)["yaml"]))
+                    if config.get("role") != "server":
+                        raise Problem("فایل اتصال از تونل سرور صادر می‌شود.")
+                    self.answer(200, {"format": "paqet-peer-v1", "port": str(mapping(config.get("listen")).get("addr", "")).rsplit(":", 1)[-1],
+                                      "transport": config.get("transport")})
                 elif method == "GET" and operation == "logs":
                     self.answer(200, {"logs": manager.logs(name)})
                 elif method == "GET" and operation == "diagnose":

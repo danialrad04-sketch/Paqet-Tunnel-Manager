@@ -38,7 +38,7 @@ https://t.me/BehzadEa12
 Install the Persian dashboard on a fresh Debian/Ubuntu system:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/danialrad04-sketch/Paqet-Tunnel-Manager/web-panel/bootstrap-web.sh -o bootstrap-web.sh && sudo bash bootstrap-web.sh
+curl -fsSL https://raw.githubusercontent.com/danialrad04-sketch/Paqet-Tunnel-Manager/main/bootstrap-web.sh -o bootstrap-web.sh && sudo bash bootstrap-web.sh
 ```
 
 The bootstrap downloads the panel files from GitHub and installs the checksum-verified Paqet core on amd64 or arm64 if needed. From a local checkout, use `sudo bash install-web.sh`. It discovers existing Paqet services, provisions server and client tunnels individually or from a JSON batch, controls systemd services, edits KCP settings, and displays journal logs. See the [Persian installation guide](README.fa.md#پنل-وب-paqet) for SSH access, core installation and examples.
