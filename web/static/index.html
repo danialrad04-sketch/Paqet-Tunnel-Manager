@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1018">
+<title>میز کار Paqet</title>
+<link rel="stylesheet" href="/styles.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="login-form" class="panel login-card">
+    <div class="brand"><span class="brand-icon" data-icon="layers"></span><strong>Paqet</strong></div>
+    <h1>ورود به میز کار</h1>
+    <p class="muted">توکن مدیریتی تولیدشده هنگام نصب را وارد کنید.</p>
+    <label>توکن مدیر<input name="token" type="password" dir="ltr" required autocomplete="current-password"></label>
+    <button class="primary">ورود به پنل</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</div>
+<div id="workspace" class="workspace" hidden>
+  <aside>
+    <div class="brand"><span class="brand-icon" data-icon="layers"></span><span><strong>Paqet</strong><small>مدیریت شبکه</small></span></div>
+    <div class="nav-label">فضای کاری</div>
+    <nav>
+      <button data-page="overview" class="selected" aria-current="page"><span data-icon="grid"></span>نمای کلی</button>
+      <button data-page="tunnels"><span data-icon="route"></span>تونل‌ها</button>
+      <button data-page="host"><span data-icon="server"></span>میزبان</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="host-tile"><span class="tile-icon" data-icon="server"></span><span><b id="sidebar-host" dir="ltr">—</b><small>میزبان محلی</small></span></div>
+      <button id="logout" class="quiet" hidden><span data-icon="logout"></span>خروج از پنل</button>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <div class="path"><span data-icon="grid"></span><span>میز کار</span><span class="divider">/</span><strong id="crumb">نمای کلی</strong></div>
+      <div class="top-actions"><span id="demo" class="badge neutral" hidden>داده‌های نمایشی</span>
+        <button id="refresh" class="icon-button" aria-label="به‌روزرسانی" title="به‌روزرسانی"><span data-icon="refresh"></span></button></div>
+    </header>
+    <div class="content">
+      <section id="hero" class="hero">
+        <div class="hero-art" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><b></b><b></b><b></b></div>
+        <div class="hero-copy"><div class="hero-label"><span></span> عملیات شبکه</div>
+          <h1>مرکز کنترل تونل‌ها</h1>
+          <p>وضعیت تونل‌ها را ببینید، سرویس‌ها را مدیریت کنید و اتصال جدید بسازید.</p>
+          <button class="primary" data-create><span data-icon="plus"></span>تونل جدید</button>
+        </div>
+      </section>
+      <div id="metrics" class="metrics">
+        <article class="panel metric"><span class="metric-icon violet" data-icon="route"></span><span class="muted">همهٔ تونل‌ها</span><strong id="total">—</strong></article>
+        <article class="panel metric"><span class="metric-icon green" data-icon="activity"></span><span class="muted">سرویس فعال</span><strong id="active">—</strong></article>
+        <article class="panel metric"><span class="metric-icon amber" data-icon="pause"></span><span class="muted">متوقف</span><strong id="inactive">—</strong></article>
+        <article class="panel metric"><span class="metric-icon red" data-icon="alert"></span><span class="muted">ناموفق</span><strong id="failed">—</strong></article>
+      </div>
+      <section id="tunnels" class="panel inventory">
+        <div class="section-head"><div><h2>تونل‌ها</h2><p class="muted">سرویس‌های Paqet روی این میزبان</p></div>
+          <div class="inventory-actions"><button id="open-batch" class="secondary">راه‌اندازی گروهی</button><button class="primary compact" data-create><span data-icon="plus"></span>افزودن تونل</button></div>
+        </div>
+        <div class="filters">
+          <label class="search"><span data-icon="search"></span><input id="query" type="search" placeholder="جست‌وجوی نام یا مقصد" aria-label="جست‌وجوی تونل‌ها"></label>
+          <select id="status" aria-label="فیلتر وضعیت"><option value="">همهٔ وضعیت‌ها</option><option value="active">فعال</option><option value="inactive">متوقف</option><option value="failed">ناموفق</option></select>
+          <select id="role" aria-label="فیلتر نقش"><option value="">همهٔ نقش‌ها</option><option value="server">سرور</option><option value="client">کلاینت</option></select>
+        </div>
+        <p id="inventory-error" class="error" role="alert" hidden></p>
+        <div class="table-scroll">
+          <table><thead><tr><th>نام تونل</th><th>نقش</th><th>آدرس</th><th>وضعیت</th><th>KCP</th><th>مدیریت</th></tr></thead><tbody id="rows"></tbody></table>
+        </div>
+        <footer id="count" class="muted" aria-live="polite"></footer>
+      </section>
+      <section id="host" class="panel host-panel" hidden>
+        <h1>میزبان</h1>
+        <dl><div><dt>نام میزبان</dt><dd id="hostname" dir="ltr">—</dd></div>
+          <div><dt>هسته Paqet</dt><dd id="core">—</dd></div>
+          <div><dt>آخرین همگام‌سازی</dt><dd id="updated">—</dd></div></dl>
+      </section>
+    </div>
+  </main>
+</div>
+<dialog id="create-dialog" aria-labelledby="create-title">
+  <form id="create-form">
+    <div class="modal-head"><div><h2 id="create-title">ساخت تونل</h2><p class="muted">پیکربندی و فعال‌سازی سرویس روی همین میزبان</p></div><button type="button" class="icon-button" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <label>نام تونل<input name="name" required dir="ltr" maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,47}" placeholder="edge-01"></label>
+        <label>نقش<select name="role"><option value="server">سرور</option><option value="client">کلاینت</option></select></label>
+        <label>پورت تونل<input name="port" required type="number" min="1" max="65535" value="443" dir="ltr"></label>
+        <label id="remote-label" hidden>IPv4 سرور مقصد<input name="remote" dir="ltr" placeholder="203.0.113.10"></label>
+        <label class="wide">کلید مشترک<input name="key" type="password" dir="ltr" minlength="8" maxlength="128" autocomplete="off" placeholder="برای ساخت خودکار خالی بگذارید"></label>
+        <label>حالت KCP<select name="mode" dir="ltr"><option>fast</option><option>normal</option><option>fast2</option><option>fast3</option></select></label>
+        <label>MTU<input name="mtu" type="number" min="576" max="1500" value="1350" required dir="ltr"></label>
+        <label>تعداد اتصال KCP<input name="conn" type="number" min="1" max="64" value="1" required dir="ltr"></label>
+      </div>
+      <section id="forwards" hidden>
+        <label>پورت SOCKS5 روی میزبان محلی<input name="socks" type="number" min="1" max="65535" dir="ltr" placeholder="اختیاری"></label>
+        <div class="forward-head"><h3>انتقال پورت</h3><button id="add-forward" type="button" class="secondary"><span data-icon="plus"></span>افزودن قانون</button></div>
+        <div id="forward-rows"></div>
+      </section>
+      <p class="error" id="create-error" role="alert" hidden></p>
+    </div>
+    <div class="modal-foot"><button class="primary" type="submit">ساخت و راه‌اندازی</button><button type="button" class="secondary" data-close>انصراف</button></div>
+  </form>
+</dialog>
+<dialog id="batch-dialog" aria-labelledby="batch-title">
+  <form id="batch-form">
+    <div class="modal-head"><div><h2 id="batch-title">راه‌اندازی گروهی</h2><p class="muted">ساخت چند تونل روی همین میزبان از فایل JSON</p></div><button type="button" class="icon-button" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
+    <div class="modal-body">
+      <label>فایل پیکربندی<input id="batch-file" type="file" accept=".json,application/json" required></label>
+      <p class="muted">حداکثر ۲۰ تونل. نتیجهٔ هر تونل جداگانه نمایش داده می‌شود.</p>
+      <p id="batch-error" class="error" role="alert" hidden></p>
+      <pre id="batch-result" dir="auto" aria-live="polite" hidden></pre>
+    </div>
+    <div class="modal-foot"><button class="primary" type="submit">راه‌اندازی تونل‌ها</button><button type="button" class="secondary" data-close>بستن</button></div>
+  </form>
+</dialog>
+<dialog id="details" aria-labelledby="detail-name">
+  <div class="modal-head"><div><h2 id="detail-name" dir="ltr"></h2><p id="detail-state" class="muted"></p></div><button type="button" class="icon-button" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
+  <div class="modal-body">
+    <div class="service-actions">
+      <button class="secondary" data-action="start">شروع</button><button class="secondary" data-action="stop">توقف</button>
+      <button class="secondary" data-action="restart">راه‌اندازی مجدد</button><button class="secondary" id="autostart"></button>
+    </div>
+    <details id="tuning">
+      <summary>ویرایش تنظیمات KCP</summary>
+      <form id="tune-form">
+        <div class="form-grid">
+          <label>حالت KCP<select name="mode"><option value="">حفظ حالت فعلی</option><option>normal</option><option>fast</option><option>fast2</option><option>fast3</option></select></label>
+          <label>MTU<input name="mtu" dir="ltr" type="number" min="576" max="1500" required></label>
+          <label>تعداد اتصال KCP<input name="conn" dir="ltr" type="number" min="1" max="64" required></label>
+        </div>
+        <p class="muted">اعمال تنظیمات، سرویس فعال را راه‌اندازی مجدد می‌کند.</p>
+        <button class="primary" type="submit">ذخیره تنظیمات</button>
+      </form>
+    </details>
+    <div class="forward-head"><h3>گزارش سرویس</h3><button id="reload-logs" class="secondary">تازه‌سازی</button></div>
+    <pre id="logs" dir="ltr"></pre><p id="detail-error" class="error" role="alert" hidden></p>
+  </div>
+</dialog>
+<dialog id="key-dialog" aria-labelledby="key-title">
+  <div class="modal-head"><h2 id="key-title">کلید مشترک سرور</h2><button class="icon-button" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
+  <div class="modal-body"><p class="muted">برای ساخت کلاینت، همین کلید را در پنل میزبان دوم وارد کنید.</p><input id="key-value" readonly dir="ltr" aria-label="کلید مشترک"></div>
+  <div class="modal-foot"><button id="copy" class="primary">کپی کلید</button><button class="secondary" data-close>بستن</button></div>
+</dialog>
+<div id="toast" role="status" hidden></div>
+</body>
+</html>
