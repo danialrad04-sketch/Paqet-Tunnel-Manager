@@ -419,6 +419,15 @@ class Manager:
             systemctl("restart", unit(name), required=False)
             raise Problem("فایل قبلی بازیابی شد. " + detail) from error
 
+    def check_name_available(self, name):
+        if self.demo:
+            taken = name in self.samples or name in self.demo_archive
+        else:
+            existing = (CONFIG / f"{name}.yaml", CONFIG / f"{name}.yml", UNITS / unit(name))
+            taken = name in self.archives() or any(os.path.lexists(path) for path in existing) or name in self.names()
+        if taken:
+            raise Problem("این نام قبلاً در تنظیمات یا systemd ثبت شده است.")
+
     def create(self, data):
         if "yaml" in data:
             name = data.get("name", "")
@@ -430,21 +439,17 @@ class Manager:
         else:
             name, port, config = validate(data)
         self.check_configuration(name, config)
+        self.check_name_available(name)
         result = {"name": name}
         if config["role"] == "server":
             result["key"] = config["transport"]["kcp"]["key"]
         if self.demo:
-            if name in self.samples or name in self.demo_archive:
-                raise Problem("این نام قبلاً ثبت شده است.")
             self.samples[name] = (config, "active", True)
             return result
         if not os.access(CORE, os.X_OK):
             raise Problem("هسته Paqet نصب نشده است.")
         config_path = CONFIG / f"{name}.yaml"
         unit_path = UNITS / unit(name)
-        names = self.names()
-        if name in self.archives() or os.path.lexists(config_path.with_suffix(".yml")) or os.path.lexists(config_path) or os.path.lexists(unit_path) or name in names:
-            raise Problem("این نام قبلاً در تنظیمات یا systemd ثبت شده است.")
         server = config["role"] == "server"
         if server:
             if port == self.panel_port:
@@ -1053,6 +1058,9 @@ class Panel(BaseHTTPRequestHandler):
                 else:
                     raise Problem("عملیات مسیر معتبر نیست.")
                 self.answer(200, result or {})
+            elif method == "POST" and path == "/api/recovery":
+                from recovery import recover
+                self.answer(200, recover(manager, self.payload()))
             elif method == "GET" and path == "/api/host-report":
                 self.answer(200, manager.host_report())
             elif method == "GET" and path == "/api/archives":

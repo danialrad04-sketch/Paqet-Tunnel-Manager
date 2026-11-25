@@ -135,6 +135,7 @@
           <div><h2>تونل‌ها</h2><p class="muted">سرویس‌های Paqet روی این میزبان</p></div>
           <div class="inventory-actions">
             <button class="btn outline" id="open-yaml-create"><span data-icon="code"></span>ساخت از YAML</button>
+            <button id="open-recovery" class="btn outline"><span data-icon="undo"></span>بازیابی روی این میزبان</button>
             <button id="open-batch" class="btn outline"><span data-icon="upload"></span>راه‌اندازی گروهی</button>
             <button class="btn primary" data-create><span data-icon="plus"></span>افزودن تونل</button>
           </div>
@@ -316,6 +317,7 @@
     <div class="inventory-actions">
       <button class="btn outline" id="config-history">تاریخچه و بازیابی</button>
       <button class="btn outline" id="config-rotation">ساخت جفت با کلید تازه</button>
+      <button class="btn outline" id="export-recovery">دریافت فایل بازیابی</button>
       <button class="btn outline" id="share-diagnostic">گزارش قابل‌اشتراک</button>
     </div>
     <div class="service-actions">
@@ -446,6 +448,28 @@
       <p class="error wide" id="rotation-error" role="alert" hidden></p>
     </div>
     <div class="modal-foot"><button class="btn primary" type="submit">ساخت نمونهٔ آماده‌به‌کار</button></div>
+  </form>
+</dialog>
+
+<dialog id="recovery-dialog" aria-labelledby="recovery-title">
+  <form id="recovery-form">
+    <div class="modal-head"><h2 id="recovery-title"></h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+    <div class="modal-body">
+      <p id="recovery-description" class="muted"></p>
+      <div class="form-grid">
+        <label class="field" id="recovery-file-label">فایل بازیابی<input name="bundle" type="file" accept=".json,application/json"></label>
+        <label class="field" id="recovery-name-label">نام تونل روی این میزبان<input name="name" dir="ltr" placeholder="از فایل خوانده می‌شود" maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,47}"></label>
+        <label class="field wide">عبارت بازیابی<input name="password" type="password" dir="auto" minlength="16" maxlength="128" required autocomplete="off"></label>
+      </div>
+      <section id="recovery-summary" class="advanced" aria-live="polite" hidden>
+        <h3>پیش‌نمایش بازیابی</h3>
+        <dl id="recovery-facts" class="detail-facts"></dl>
+        <ul id="recovery-listeners" dir="ltr"></ul>
+        <p class="muted">IP عمومی جدید را پس از تست در DNS یا تنظیمات کاربران وارد کنید. فعال بودن سرویس را از جزئیات تونل بررسی کنید.</p>
+      </section>
+      <p id="recovery-error" class="error" role="alert" hidden></p>
+    </div>
+    <div class="modal-foot"><button id="recovery-submit" class="btn primary" type="submit"></button><button id="recovery-apply" class="btn outline" type="button" hidden>ساخت و فعال‌سازی تونل</button></div>
   </form>
 </dialog>
 

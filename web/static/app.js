@@ -751,6 +751,7 @@ function renderDetails() {
   $("#edit-config").hidden = !tunnel.editable;
   $("#edit-forward").hidden = $("#edit-config").hidden || tunnel.role !== "client";
   $("#config-history").hidden = !tunnel.editable;
+  $("#export-recovery").hidden = !tunnel.editable || tunnel.role !== "client";
   $("#config-rotation").hidden = !tunnel.editable || !registered ||
     !(tunnel.role === "server" || tunnel.forwards.some(rule => rule.protocol === "tcp"));
   $("#export-peer").hidden = $("#edit-config").hidden || tunnel.role !== "server";
@@ -1526,3 +1527,107 @@ $("#checkpoint-peer").onchange = async (event) => {
     output.hidden = false;
   } catch (error) { showError("#history-error", error.message); }
 };
+
+const recoveryDialog = $("#recovery-dialog");
+const recoveryForm = $("#recovery-form");
+let recoveryExport, recoveryDraft;
+
+function clearRecoveryPreview() {
+  recoveryDraft = undefined;
+  $("#recovery-apply").hidden = $("#recovery-summary").hidden = true;
+}
+
+function openRecovery(name) {
+  recoveryExport = name;
+  recoveryForm.reset();
+  clearRecoveryPreview();
+  showError("#recovery-error");
+  $("#recovery-title").textContent = name ? "دریافت فایل بازیابی" : "بازیابی تونل ایران";
+  $("#recovery-description").textContent = name
+    ? "فایل رمزگذاری‌شده شامل تنظیمات اتصال و کلید مشترک است. فایل و عبارت بازیابی را جداگانه ذخیره کنید. برای انتقال عبارت از نشست مدیریتی روی SSH استفاده کنید."
+    : "فایل و عبارت بازیابی را وارد کنید. پنل مسیر به سرور خارج و پورت‌های ورودی را بررسی می‌کند. عبارت بازیابی را از طریق نشست مدیریتی روی SSH وارد کنید.";
+  $("#recovery-file-label").hidden = $("#recovery-name-label").hidden = Boolean(name);
+  recoveryForm.elements.bundle.required = !name;
+  recoveryForm.elements.name.disabled = Boolean(name);
+  $("#recovery-submit").textContent = name ? "دریافت فایل رمزگذاری‌شده" : "پیش‌بررسی روی این میزبان";
+  recoveryDialog.showModal();
+}
+
+$("#open-recovery").onclick = () => openRecovery();
+$("#export-recovery").onclick = () => openRecovery(selected);
+recoveryForm.oninput = clearRecoveryPreview;
+recoveryDialog.onclose = () => {
+  recoveryForm.reset();
+  clearRecoveryPreview();
+};
+
+function renderRecovery(result) {
+  const facts = $("#recovery-facts");
+  facts.replaceChildren();
+  for (const [label, value] of [
+    ["نام تونل تازه", result.name], ["کلاینت قبلی", result.source], ["مقصد خارج", result.remote],
+    ["رابط خروجی", result.interface], ["IPv4 محلی تشخیص‌داده‌شده", result.local],
+  ]) {
+    const item = document.createElement("div");
+    const title = document.createElement("dt");
+    const detail = document.createElement("dd");
+    title.textContent = label;
+    detail.dir = "ltr";
+    detail.textContent = value;
+    item.append(title, detail);
+    facts.append(item);
+  }
+  $("#recovery-listeners").replaceChildren(...result.listeners.map(row => {
+    const line = document.createElement("li");
+    const listener = row.listen === row.original ? row.listen : row.original + " ⇒ " + row.listen;
+    line.textContent = row.protocol.toUpperCase() + " · " + listener + (row.target ? " → " + row.target : " · SOCKS5");
+    return line;
+  }));
+  $("#recovery-summary").hidden = $("#recovery-apply").hidden = false;
+}
+
+async function recoveryOperation(callback) {
+  const controls = [...recoveryForm.elements];
+  const disabled = controls.map(field => field.disabled);
+  controls.forEach(field => field.disabled = true);
+  showError("#recovery-error");
+  try { await callback(); }
+  catch (error) { showError("#recovery-error", error.message); }
+  finally { controls.forEach((field, i) => field.disabled = disabled[i]); }
+}
+
+recoveryForm.onsubmit = async event => {
+  event.preventDefault();
+  await recoveryOperation(async () => {
+    const {password, bundle, name} = recoveryForm.elements;
+    if (recoveryExport) {
+      const encrypted = await api("recovery", {action:"export", name:recoveryExport, password:password.value});
+      downloadJson(recoveryExport + "-recovery.json", encrypted);
+      recoveryDialog.close();
+      toast("فایل بازیابی رمزگذاری‌شده دریافت شد.");
+      return;
+    }
+    clearRecoveryPreview();
+    const file = bundle.files[0];
+    if (!file || file.size > 400000) throw Error("فایل بازیابی معتبر نیست یا حجم آن زیاد است.");
+    const data = {bundle:JSON.parse(await file.text()), name:name.value, password:password.value};
+    const result = await api("recovery", {...data, action:"preview"});
+    recoveryDraft = {bundle:data.bundle, name:result.name, preview:result.preview};
+    renderRecovery(result);
+  });
+};
+
+$("#recovery-apply").onclick = async () => {
+  if (!recoveryDraft) return;
+  await recoveryOperation(async () => {
+    const result = await api("recovery", {...recoveryDraft, action:"restore",
+      password:recoveryForm.elements.password.value});
+    recoveryDialog.close();
+    await refresh();
+    toast(result.demo ? "بازیابی نمایشی انجام شد." : "تونل «" + result.name + "» ساخته و فعال شد.");
+    if (tunnels.some(row => row.name === result.name)) openDetails(result.name);
+  });
+};
+recoveryDialog.addEventListener("cancel", event => {
+  if ($("#recovery-submit").disabled) event.preventDefault();
+});

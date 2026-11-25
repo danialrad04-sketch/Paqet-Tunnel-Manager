@@ -58,7 +58,7 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
     { echo 'Missing panel files. Use bootstrap-web.sh for installation from GitHub.' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 /usr/bin/apt-get update
-/usr/bin/apt-get install -y python3 python3-yaml libpcap-dev iptables iproute2 iputils-ping curl ca-certificates
+/usr/bin/apt-get install -y python3 python3-yaml python3-cryptography libpcap-dev iptables iproute2 iputils-ping curl ca-certificates
 staging=$(mktemp -d)
 trap 'rm -rf -- "$staging"' EXIT
 
@@ -107,7 +107,7 @@ fi
 
 install -d -m 0755 /opt/paqet-panel /opt/paqet-panel/static /opt/paqet-panel/static/fonts
 install -d -m 0700 /etc/paqet-panel
-install -m 0644 "$source_dir"/web/{panel,relay,operations}.py /opt/paqet-panel/
+install -m 0644 "$source_dir"/web/{panel,relay,operations,recovery}.py /opt/paqet-panel/
 install -m 0755 "$source_dir/web/packet-rules.sh" /opt/paqet-panel/packet-rules.sh
 install -m 0644 "$source_dir"/web/static/*.html "$source_dir"/web/static/*.css "$source_dir"/web/static/*.js /opt/paqet-panel/static/
 install -m 0644 "$source_dir"/web/static/fonts/* /opt/paqet-panel/static/fonts/
