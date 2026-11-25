@@ -14,11 +14,73 @@ const icons = {
   search: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   logout: '<path d="M10 4H5v16h5m4-12 4 4-4 4m-4-4h11"/>',
+  tunnel: '<path d="M3 20v-8a9 9 0 0 1 18 0v8"/><path d="M7 20v-7a5 5 0 0 1 10 0v7"/><path d="M3 20h18"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 8.7-8.7M17 6l2.5 2.5M15 8l2 2"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+  chevron: '<path d="m9 6 6 6-6 6"/>',
+  "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  upload: '<path d="M12 15V4m0 0L8 8m4-4 4 4M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  sliders: '<path d="M4 6h10m4 0h2M4 12h4m4 0h8M4 18h12m4 0h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  play: '<path d="M7 5v14l11-7L7 5Z"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  radar: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="m12 12 6-6"/>',
+  network: '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2h12v2"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
+  arrow: '<path d="M15 6l-6 6 6 6"/>',
 };
 function icon(name) {
   return '<svg viewBox="0 0 24 24" aria-hidden="true">' + icons[name] + '</svg>';
 }
 document.querySelectorAll("[data-icon]").forEach((el) => { el.innerHTML = icon(el.dataset.icon); });
+
+/* Theme: per-browser preference, falls back to the system setting. */
+function storedTheme() {
+  try { return localStorage.getItem("paqet-theme"); } catch { return null; }
+}
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]').content = theme === "light" ? "#fafafa" : "#09090b";
+}
+applyTheme(storedTheme() || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
+$("#theme").onclick = () => {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  applyTheme(next);
+  try { localStorage.setItem("paqet-theme", next); } catch { /* storage unavailable */ }
+};
+
+/* Mobile navigation drawer */
+function setMenu(open) {
+  $("#sidebar").classList.toggle("open", open);
+  $("#scrim").hidden = !open;
+}
+$("#menu-open").onclick = () => setMenu(true);
+$("#menu-close").onclick = $("#scrim").onclick = () => setMenu(false);
+
+/* Promise-based confirm that matches the panel instead of window.confirm */
+function confirmAction(text, {ok = "ادامه", danger = false} = {}) {
+  const dialog = $("#confirm-dialog");
+  $("#confirm-text").textContent = text;
+  $("#confirm-ok").textContent = ok;
+  $("#confirm-ok").className = "btn " + (danger ? "destructive" : "primary");
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      $("#confirm-ok").onclick = $("#confirm-cancel").onclick = null;
+      dialog.onclose = null;
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    $("#confirm-ok").onclick = () => finish(true);
+    $("#confirm-cancel").onclick = () => finish(false);
+    dialog.onclose = () => finish(false);
+    dialog.showModal();
+    $("#confirm-ok").focus();
+  });
+}
 const states = {active:"فعال", inactive:"متوقف", failed:"ناموفق", activating:"در حال شروع",
   deactivating:"در حال توقف", reloading:"در حال بارگذاری", unregistered:"بدون سرویس"};
 const roles = {server:"سرور", client:"کلاینت"};
@@ -34,8 +96,9 @@ function showError(selector, message = "") {
   target.textContent = message;
   target.hidden = !message;
 }
-function toast(message) {
+function toast(message, error = false) {
   $("#toast").textContent = message;
+  $("#toast").classList.toggle("is-error", error);
   $("#toast").hidden = false;
   clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => { $("#toast").hidden = true; }, 3300);
@@ -97,7 +160,7 @@ $("#bulk-actions").onsubmit = async (event) => {
   const form = event.currentTarget;
   const action = form.elements.action.value;
   const names = [...picked];
-  if (action !== "start" && !window.confirm("عملیات روی " + digits.format(names.length) + " تونل اجرا شود؟")) return;
+  if (action !== "start" && !(await confirmAction("عملیات «" + form.elements.action.selectedOptions[0].text + "» روی " + digits.format(names.length) + " تونل اجرا شود؟", {ok:"اجرا", danger:action === "stop"}))) return;
   bulkRunning = true;
   for (const control of form.elements) control.disabled = true;
   render();
@@ -146,13 +209,16 @@ function render() {
     pick.disabled = bulkRunning || !registered.has(tunnel.name);
     pick.setAttribute("aria-label", "انتخاب " + tunnel.name);
     pick.parentElement.className = "pick";
+    row.classList.toggle("is-picked", pick.checked);
     pick.onchange = () => {
       if (pick.checked) picked.add(tunnel.name);
       else picked.delete(tunnel.name);
+      row.classList.toggle("is-picked", pick.checked);
       renderSelection();
     };
+    row.ondblclick = () => openDetails(tunnel.name);
     const identity = cell(row, "", "div");
-    identity.className = "identity";
+    identity.className = "identity " + (tunnel.role || "");
     const mark = document.createElement("span");
     mark.innerHTML = icon("route");
     const name = document.createElement("b");
@@ -160,17 +226,28 @@ function render() {
     name.textContent = tunnel.name;
     identity.append(mark, name);
     cell(row, roles[tunnel.role] || "نامشخص");
-    cell(row, tunnel.endpoint || "—", "code").dir = "ltr";
+    const endpoint = tunnel.endpoint && tunnel.endpoint.startsWith(":") ? "0.0.0.0" + tunnel.endpoint : tunnel.endpoint;
+    cell(row, endpoint || "—", "code").dir = "ltr";
     const badge = cell(row, states[tunnel.state] || "نامشخص");
     badge.className = "badge " + (Object.hasOwn(states, tunnel.state) ? tunnel.state : "neutral");
     cell(row, tunnel.mode || "—", "code").dir = "ltr";
-    const button = cell(row, "جزئیات", "button");
+    const button = cell(row, "مدیریت", "button");
     button.type = "button";
     button.className = "inline-action";
+    button.insertAdjacentHTML("beforeend", icon("chevron"));
     button.setAttribute("aria-label", "جزئیات " + tunnel.name);
     button.onclick = () => openDetails(tunnel.name);
   }
   renderSelection();
+  const filtered = Boolean(query || status || role);
+  $("#empty").hidden = visible.length > 0;
+  rows.closest("table").hidden = visible.length === 0;
+  $("#empty-title").textContent = tunnels.length ? "تونلی با این فیلترها پیدا نشد" : "هنوز تونلی ساخته نشده";
+  $("#empty-text").textContent = tunnels.length ? "عبارت جست‌وجو یا فیلترها را تغییر دهید."
+    : "اولین تونل را بسازید تا وضعیت و گزارش آن اینجا نمایش داده شود.";
+  $("#empty-create").hidden = filtered && tunnels.length > 0;
+  $("#nav-count").textContent = digits.format(tunnels.length);
+  $("#nav-count").hidden = !tunnels.length;
   $("#count").textContent = visible.length
     ? digits.format(visible.length) + " از " + digits.format(tunnels.length) + " تونل"
     : (tunnels.length ? "تونلی با این فیلترها پیدا نشد." : "هنوز سرویسی ثبت نشده است.");
@@ -189,10 +266,49 @@ function renderIncident() {
   $("#incident-list").textContent = bad.slice(0, 4).map((tunnel) => tunnel.name).join("، ") +
     (bad.length > 4 ? " و " + digits.format(bad.length - 4) + " مورد دیگر" : "");
 }
+const history = {cpu: [], memory: [], rx: [], tx: []};
+const HISTORY = 30;
+function push(series, value) {
+  series.push(Number.isFinite(value) ? value : null);
+  if (series.length > HISTORY) series.shift();
+}
+function sparkPath(series, max) {
+  const points = series.map((value, index) => value === null ? null :
+    [(index + HISTORY - series.length) * (120 / (HISTORY - 1)), 31 - Math.min(value / max, 1) * 29]);
+  let path = "";
+  let pen = false;
+  for (const point of points) {
+    if (!point) { pen = false; continue; }
+    path += (pen ? "L" : "M") + point[0].toFixed(1) + " " + point[1].toFixed(1);
+    pen = true;
+  }
+  return path;
+}
+function drawSpark(id, series, max = 100) {
+  const svg = $(id);
+  const line = svg.querySelector(".spark-line");
+  const fill = svg.querySelector(".spark-fill");
+  const d = sparkPath(series, max);
+  line.setAttribute("d", d);
+  if (fill) {
+    const firstX = d.match(/^M([\d.]+)/)?.[1];
+    const lastX = d.match(/([\d.]+) [\d.]+$/)?.[1];
+    fill.setAttribute("d", d && firstX && lastX ? d + "L" + lastX + " 32L" + firstX + " 32Z" : "");
+  }
+}
+function drawNet() {
+  const max = Math.max(1024, ...history.rx.filter(Number.isFinite), ...history.tx.filter(Number.isFinite)) * 1.15;
+  const svg = $("#net-spark");
+  svg.querySelector(".rx").setAttribute("d", sparkPath(history.rx, max));
+  svg.querySelector(".tx").setAttribute("d", sparkPath(history.tx, max));
+}
 function percent(selector, value) {
   const valid = Number.isFinite(value) && value >= 0 && value <= 100;
   $(selector).textContent = valid ? digits.format(Math.round(value)) + "٪" : "—";
   $(selector + "-meter").value = valid ? value : 0;
+  const key = selector.slice(1);
+  push(history[key], valid ? value : NaN);
+  drawSpark(selector + "-spark", history[key]);
 }
 function rate(value) {
   if (!Number.isFinite(value) || value < 0) return "—";
@@ -224,6 +340,10 @@ function renderSample(sample, demo) {
   if (names.includes(selection)) select.value = selection;
   select.disabled = !names.length;
   renderRates();
+  const speeds = interfaceRates[select.value] || [];
+  push(history.rx, speeds[0]);
+  push(history.tx, speeds[1]);
+  drawNet();
   const cpu = sample.cpu || [];
   const previousCpu = previousSample?.cpu || [];
   const deltas = cpu.map((value, index) => value - previousCpu[index]);
@@ -235,7 +355,11 @@ function renderSample(sample, demo) {
   $("#sample-state").className = "badge " + (ready ? "active" : "neutral");
   previousSample = sample;
 }
-$("#sample-interface").addEventListener("change", renderRates);
+$("#sample-interface").addEventListener("change", () => {
+  history.rx.length = history.tx.length = 0;
+  drawNet();
+  renderRates();
+});
 $("#show-failed").onclick = () => {
   $("#status").value = "failed";
   $("#query").value = $("#role").value = "";
@@ -255,12 +379,24 @@ $("#region-form").onsubmit = async (event) => {
     await refresh();
     toast("موقعیت میزبان ذخیره شد.");
   } catch (error) {
-    toast(error.message);
+    toast(error.message, true);
   } finally {
     button.disabled = false;
   }
 };
 
+function renderPath(overview, activeCount) {
+  const local = overview.region === "ir" ? "ایران" : overview.region === "foreign" ? "خارج" : overview.host;
+  $("#path-local").textContent = local || "—";
+  const peers = [...new Set(tunnels.filter((tunnel) => tunnel.role === "client" && tunnel.endpoint)
+    .map((tunnel) => tunnel.endpoint.split(":")[0]))];
+  $("#path-remote").dir = peers.length === 1 ? "ltr" : "auto";
+  $("#path-remote").textContent = peers.length === 1 ? peers[0]
+    : peers.length > 1 ? digits.format(peers.length) + " سرور"
+    : overview.topology === "server" ? "کلاینت‌ها" : "—";
+  $("#path-count").textContent = digits.format(activeCount) + " فعال از " + digits.format(tunnels.length);
+  $(".path-viz").classList.toggle("idle", activeCount === 0);
+}
 async function refresh() {
   if (loading) return;
   loading = true;
@@ -283,13 +419,19 @@ async function refresh() {
     $("#sidebar-host").textContent = overview.host;
     $("#hostname").textContent = overview.host;
     $("#core").textContent = overview.core ? "نصب شده" : "در دسترس نیست";
-    $("#updated").textContent = new Date().toLocaleTimeString("fa-IR");
+    $("#updated").textContent = $("#sync-time").textContent = new Date().toLocaleTimeString("fa-IR", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+    $("#sync-state").classList.remove("stale");
+    const failedCount = tunnels.filter((tunnel) => tunnel.state === "failed").length;
+    const activeCount = tunnels.filter((tunnel) => tunnel.state === "active").length;
+    $("#failed").closest(".metric").classList.toggle("hot", failedCount > 0);
+    renderPath(overview, activeCount);
     showError("#inventory-error");
     render();
     if ($("#details").open) renderDetails();
   } catch (error) {
     showError("#inventory-error", error.message);
-    if ($("#host").hidden === false) toast(error.message);
+    $("#sync-state").classList.add("stale");
+    if ($("#host").hidden === false) toast(error.message, true);
   } finally {
     $("#refresh").disabled = false;
     loading = false;
@@ -297,6 +439,8 @@ async function refresh() {
 }
 function selectPage(page) {
   currentPage = page;
+  setMenu(false);
+  window.scrollTo({top: 0});
   for (const item of document.querySelectorAll("[data-page]")) {
     const current = item.dataset.page === page;
     item.classList.toggle("selected", current);
@@ -338,7 +482,7 @@ async function loadReport() {
     const days = Math.floor(report.uptime / 86400);
     const hours = Math.floor(report.uptime / 3600) % 24;
     const body = $("#host-report");
-    body.className = "report-grid";
+    body.className = "card-body report-grid";
     body.replaceChildren(
       reportList("سیستم", [report.kernel, "زمان روشن بودن " + digits.format(days) + " روز و " + digits.format(hours) + " ساعت",
         "فضای مصرف‌شدهٔ دیسک " + gib(report.disk[1]) + " از " + gib(report.disk[0])]),
@@ -444,7 +588,7 @@ async function loadArchives() {
     for (const name of names) {
       const row = listEntry(list, name);
       listButton(row, "بازیابی تونل", async () => {
-        if (!window.confirm("تونل " + name + " با وضعیت پیشین سرویس بازیابی شود؟")) return;
+        if (!(await confirmAction("تونل " + name + " با وضعیت پیشین سرویس بازیابی شود؟", {ok:"بازیابی"}))) return;
         try {
           await api("archives/" + name + "/restore", {});
           await loadArchives();
@@ -457,8 +601,12 @@ async function loadArchives() {
 }
 
 const create = $("#create-form");
+for (const radio of create.querySelectorAll('[name="role-pick"]')) {
+  radio.onchange = () => { create.elements.role.value = radio.value; useRole(); };
+}
 function useRole() {
   const client = create.elements.role.value === "client";
+  for (const radio of create.querySelectorAll('[name="role-pick"]')) radio.checked = radio.value === create.elements.role.value;
   $("#remote-label").hidden = $("#forwards").hidden = !client;
   create.elements.remote.disabled = !client;
   create.elements.remote.required = client;
@@ -473,7 +621,7 @@ function addForward() {
   row.innerHTML = '<label>ورودی<input data-field="listen" dir="ltr" type="number" min="1" max="65535" required></label>' +
     '<label>مقصد<input data-field="target" dir="ltr" type="number" min="1" max="65535" required></label>' +
     '<label>پروتکل<select data-field="protocol" dir="ltr"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP/UDP</option></select></label>' +
-    '<button type="button" class="icon-button" aria-label="حذف قانون">' + icon("close") + '</button>';
+    '<button type="button" class="btn ghost icon" aria-label="حذف قانون">' + icon("trash") + '</button>';
   row.querySelector("button").onclick = () => row.remove();
   $("#forward-rows").append(row);
   row.querySelector("input").focus();
@@ -481,6 +629,7 @@ function addForward() {
 create.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(create));
+  delete data["role-pick"];
   if (data.role === "client") {
     data.forwards = Array.from($("#forward-rows").children, (row) =>
       Object.fromEntries(Array.from(row.querySelectorAll("[data-field]"), (field) => [field.dataset.field, field.value])));
@@ -517,6 +666,12 @@ batchDialog.addEventListener("close", () => {
   showError("#batch-error");
 });
 $("#open-batch").onclick = () => batchDialog.showModal();
+const batchHint = $("#batch-file-name").textContent;
+$("#batch-file").onchange = () => {
+  const file = $("#batch-file").files[0];
+  $("#batch-file-name").textContent = file ? file.name + " · " + digits.format(Math.ceil(file.size / 1024)) + " کیلوبایت" : batchHint;
+};
+batch.addEventListener("reset", () => { $("#batch-file-name").textContent = batchHint; });
 batch.onsubmit = async (event) => {
   event.preventDefault();
   const file = $("#batch-file").files[0];
@@ -688,7 +843,7 @@ $("#archive-form").onsubmit = async (event) => {
 };
 $("#refresh-network").onclick = async () => {
   const name = selected;
-  if (!window.confirm("رابط، IPv4 و MAC مسیر جدید اعمال شوند؟ تونل فعال دوباره راه‌اندازی می‌شود.")) return;
+  if (!(await confirmAction("رابط، IPv4 و MAC مسیر جدید اعمال شوند؟ تونل فعال دوباره راه‌اندازی می‌شود.", {ok:"اعمال"}))) return;
   const button = $("#refresh-network");
   button.disabled = true;
   showError("#detail-error");
@@ -716,7 +871,7 @@ $("#check-route").onclick = async () => {
   }
 };
 $("#restore").onclick = async () => {
-  if (!window.confirm("تنظیمات پیش از آخرین ویرایش بازیابی شود؟ سرویس فعال دوباره راه‌اندازی می‌شود.")) return;
+  if (!(await confirmAction("تنظیمات پیش از آخرین ویرایش بازیابی شود؟ سرویس فعال دوباره راه‌اندازی می‌شود.", {ok:"بازگردانی"}))) return;
   const button = $("#restore");
   button.disabled = true;
   showError("#detail-error");
@@ -736,7 +891,8 @@ $("#key-dialog").addEventListener("close", () => { $("#key-value").value = ""; }
 $("#copy").onclick = async () => {
   try {
     await navigator.clipboard.writeText($("#key-value").value);
-    $("#copy").textContent = "کپی شد";
+    $("#copy").textContent = "کپی شد ✓";
+    toast("کلید در کلیپ‌بورد کپی شد.");
   } catch {
     $("#key-value").select();
   }
@@ -760,6 +916,16 @@ document.querySelectorAll("[data-create]").forEach((button) => {
 document.querySelectorAll("[data-page]").forEach((button) => {
   button.onclick = () => selectPage(button.dataset.page);
 });
+document.querySelectorAll("[data-page-link]").forEach((button) => {
+  button.onclick = () => selectPage(button.dataset.pageLink);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "/" || event.ctrlKey || event.metaKey || document.querySelector("dialog[open]")) return;
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName) || $("#workspace").hidden) return;
+  event.preventDefault();
+  if ($("#tunnels").hidden) selectPage("tunnels");
+  $("#query").focus();
+});
 $("#query").oninput = $("#status").onchange = $("#role").onchange = render;
 $("#refresh").onclick = refresh;
 $("#logout").onclick = async () => {
@@ -767,7 +933,7 @@ $("#logout").onclick = async () => {
     await api("logout", {});
     showLogin();
   } catch (error) {
-    toast(error.message);
+    toast(error.message, true);
   }
 };
 $("#login-form").onsubmit = async (event) => {
