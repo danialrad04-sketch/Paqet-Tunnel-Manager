@@ -45,6 +45,8 @@ curl -fsSL https://raw.githubusercontent.com/danialrad04-sketch/Paqet-Tunnel-Man
 
 The bootstrap downloads the panel files from GitHub and installs the checksum-verified Paqet core on amd64 or arm64 if needed. From a local checkout, use `sudo bash install-web.sh`. It discovers existing Paqet services, provisions server and client tunnels individually or from a JSON batch, controls systemd services, edits KCP settings, and displays journal logs. See the [Persian installation guide](README.fa.md#پنل-وب-paqet) for SSH access, core installation and examples.
 
+**Paths and monitoring** manages a TCP listener that can forward through an existing Paqet listener or through authenticated HTTP CONNECT over TLS. It provides background application probes, a bounded comparison, failover for new connections, and monthly usage per managed route. A receiver uses an existing Let’s Encrypt certificate and a fixed loopback destination. The tunnel detail view offers MTU preflight, configuration history, paired checkpoints, staged KCP key rotation, and a sanitized diagnostics export.
+
 ## Quick Start
 
 Run the script on **both servers** as **root**:

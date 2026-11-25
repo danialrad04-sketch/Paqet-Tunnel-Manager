@@ -568,3 +568,19 @@ pre.terminal{background:var(--terminal);color:#d4d4d8;border-color:#1f1f24;min-h
 .error{white-space:pre-wrap;overflow-wrap:anywhere}
 .guide-steps{list-style:decimal inside;padding-inline:22px}.guide-steps li{margin-block:8px}.guide-steps p,.probe-box p{color:var(--muted);margin-block:5px;font-size:13px}
 .probe-box{padding:14px;display:grid;gap:8px}.probe-box label{display:flex;align-items:center;gap:8px}.probe-box .field{display:grid}
+
+/* Managed paths use the same cards, typography and controls as the inventory. */
+.route-help{padding:14px 20px}
+.route-help summary,.relay-body summary{cursor:pointer;font-weight:600}
+.route-help .guide-steps{padding-inline-start:20px;margin:14px 0}
+.route-help li{margin-block:8px}
+.relay-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px}
+.relay-card{min-width:0}
+.relay-body{display:grid;gap:10px}
+.relay-body p{margin:0;overflow-wrap:anywhere}
+.relay-body details p{margin-block:6px}
+.route-check{align-self:end;padding-block:8px}
+.route-check input{inline-size:auto;vertical-align:middle}
+.route-flow{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--muted-bg);padding:12px;border-radius:var(--radius)}
+.route-tests li p{width:100%}
+#history-list{margin-block:12px}

@@ -107,7 +107,7 @@ fi
 
 install -d -m 0755 /opt/paqet-panel /opt/paqet-panel/static /opt/paqet-panel/static/fonts
 install -d -m 0700 /etc/paqet-panel
-install -m 0644 "$source_dir/web/panel.py" /opt/paqet-panel/panel.py
+install -m 0644 "$source_dir"/web/{panel,relay,operations}.py /opt/paqet-panel/
 install -m 0755 "$source_dir/web/packet-rules.sh" /opt/paqet-panel/packet-rules.sh
 install -m 0644 "$source_dir"/web/static/*.html "$source_dir"/web/static/*.css "$source_dir"/web/static/*.js /opt/paqet-panel/static/
 install -m 0644 "$source_dir"/web/static/fonts/* /opt/paqet-panel/static/fonts/

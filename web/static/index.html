@@ -40,6 +40,7 @@
     <nav>
       <button data-page="overview" class="selected" aria-current="page"><span data-icon="grid"></span>نمای کلی</button>
       <button data-page="tunnels"><span data-icon="route"></span>تونل‌ها<span id="nav-count" class="nav-count" hidden></span></button>
+      <button data-page="relays"><span data-icon="radar"></span>مسیرها و پایش</button>
       <button data-page="host"><span data-icon="server"></span>میزبان</button>
       <button data-page="servers"><span data-icon="archive"></span>سرورها و آرشیو</button>
     </nav>
@@ -195,6 +196,21 @@
         </article>
       </section>
 
+      <section id="relays" class="page" hidden>
+        <div class="page-head"><div><h1>مسیرها و پایش</h1><p class="muted">مقایسهٔ Paqet و HTTPS، پایش مقصد و مدیریت اتصال‌های جدید</p></div><button id="add-relay" class="btn primary"><span data-icon="plus"></span>مسیر جدید</button></div>
+        <details class="card route-help"><summary>راهنمای اتصال ایران و خارج</summary>
+          <ol class="guide-steps">
+            <li>در پنل خارج یک گیرندهٔ HTTPS بسازید. دامنه باید به این سرور اشاره کند و گواهی Let’s Encrypt آن روی سرور موجود باشد. مقصد، پورت سرویس روی loopback خارج است.</li>
+            <li>فایل اتصال را از گیرنده بگیرید. در ایران یک ورودی TCP روی پورتی آزاد ثبت کنید و فایل را وارد کنید. برای مقایسه، شنوندهٔ Paqet همان سرویس را نیز با آدرس loopback ایران وارد کنید.</li>
+            <li>پایش و مقایسه را اجرا کنید. برای سرویس وب، به آدرسی اشاره کنید که هم HEAD و هم GET پاسخ می‌دهد. برای اندازه‌گیری زیر بار، فایل آزمون چندمگابایتی انتخاب کنید.</li>
+            <li>برای انتقال پورت فعال، ابتدا شنوندهٔ Paqet را به یک پورت loopback منتقل کنید. سپس پورت عمومی را به ورودی این بخش اختصاص دهید. تغییر مسیر از این پس فقط اتصال‌های جدید را جابه‌جا می‌کند.</li>
+          </ol>
+          <p class="muted">این بخش جریان TCP سرویس‌هایی مثل Xray را عبور می‌دهد. فایل اتصال حاوی کلید است. برای انتقال فایل و تنظیمات از نشست پنل روی SSH یا شبکهٔ مدیریتی استفاده کنید.</p>
+        </details>
+        <p id="relay-error" class="error banner" role="alert" hidden></p>
+        <div id="relay-list" class="relay-list"></div>
+      </section>
+
       <!-- Servers page -->
       <section id="servers" class="page" hidden>
         <div class="page-head"><div><h1>سرورها و آرشیو</h1><p class="muted">دفتر پنل‌های دیگر و تونل‌های حذف‌شدهٔ قابل بازیابی</p></div></div>
@@ -267,6 +283,7 @@
         <div class="form-grid"><label class="field">IPv4 شنود SOCKS5<input name="socks_ip" value="127.0.0.1" dir="ltr"></label><label class="field">کاربر SOCKS5<input name="socks_user"></label><label class="field">رمز SOCKS5<input name="socks_password" type="password" autocomplete="new-password"></label></div>
         <div class="forward-head"><h3>انتقال پورت</h3><button id="add-forward" type="button" class="btn outline sm"><span data-icon="plus"></span>افزودن قانون</button></div>
         <div id="forward-rows"></div>
+        <p id="create-route-preview" class="route-flow" dir="ltr" aria-live="polite" hidden></p>
       </section>
       <p class="error banner" id="create-error" role="alert" hidden></p>
     </div>
@@ -296,6 +313,11 @@
   </div>
   <div class="modal-body">
     <div class="inventory-actions"><button class="btn outline" id="edit-config">ویرایش کامل YAML</button><button class="btn outline" id="edit-forward">ویرایش انتقال پورت</button><button class="btn outline" id="export-peer">دریافت فایل اتصال کلاینت</button></div>
+    <div class="inventory-actions">
+      <button class="btn outline" id="config-history">تاریخچه و بازیابی</button>
+      <button class="btn outline" id="config-rotation">ساخت جفت با کلید تازه</button>
+      <button class="btn outline" id="share-diagnostic">گزارش قابل‌اشتراک</button>
+    </div>
     <div class="service-actions">
       <button class="btn outline sm" data-action="start"><span data-icon="play"></span>شروع</button>
       <button class="btn outline sm" data-action="stop"><span data-icon="stop"></span>توقف</button>
@@ -326,7 +348,7 @@
     </details>
     <div class="tool-row">
       <section id="diagnostic" hidden>
-        <button class="btn outline sm" id="check-route"><span data-icon="radar"></span>بررسی مسیر IPv4 مقصد</button>
+        <button class="btn outline sm" id="check-route"><span data-icon="radar"></span>پیش‌بررسی IPv4 و MTU</button>
       </section>
       <button class="btn outline sm" id="refresh-network" hidden><span data-icon="network"></span>بازتشخیص تنظیمات شبکه</button>
       <button class="btn outline sm" id="restore" hidden><span data-icon="undo"></span>بازگردانی تنظیمات قبلی</button>
@@ -352,7 +374,7 @@
   </div>
 </dialog>
 <dialog id="forward-dialog" aria-label="ویرایش انتقال پورت"><form id="forward-form"><div class="modal-head"><h2>قوانین انتقال کلاینت</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div><div class="modal-body">
-       <div id="edit-forward-rows"></div><button type="button" id="new-forward-rule" class="btn outline">افزودن قانون</button><p class="error" id="forward-error" hidden role="alert"></p></div>
+       <div id="edit-forward-rows"></div><p id="edit-route-preview" class="route-flow" dir="ltr" aria-live="polite" hidden></p><button type="button" id="new-forward-rule" class="btn outline">افزودن قانون</button><p class="error" id="forward-error" hidden role="alert"></p></div>
        <div class="modal-foot"><button type="submit" class="btn primary">اعمال قوانین</button></div></form></dialog>
 <dialog id="yaml-dialog" aria-labelledby="yaml-title">
   <form id="yaml-form">
@@ -360,9 +382,77 @@
     <div class="modal-body"><label class="field">نام سرویس<input name="name" required dir="ltr"></label>
       <label class="field">تنظیمات YAML<textarea name="yaml" dir="ltr" spellcheck="false" required rows="18"></textarea></label>
       <p class="muted">کلید و رمزها در این فایل هستند. ذخیرهٔ ویرایش، سرویس فعال را دوباره راه‌اندازی می‌کند.</p>
+      <label class="field" id="yaml-group-label">شناسهٔ عملیات دوطرفه (اختیاری)<input name="group" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" dir="ltr"></label>
+      <pre class="terminal" id="yaml-diff" dir="ltr" hidden></pre>
       <p class="error" id="yaml-error" hidden role="alert"></p></div>
-    <div class="modal-foot"><button class="btn primary" type="submit">ذخیره و اعمال</button><button type="button" data-close class="btn outline">انصراف</button></div>
+    <div class="modal-foot"><button class="btn primary" type="submit">ذخیره و اعمال</button><button type="button" id="preview-yaml" class="btn outline">پیش‌نمایش تغییرات</button><button type="button" data-close class="btn outline">انصراف</button></div>
   </form>
+</dialog>
+
+<dialog id="relay-dialog" aria-labelledby="relay-title">
+  <form id="relay-form">
+    <div class="modal-head"><h2 id="relay-title">تنظیم مسیر TCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+    <div class="modal-body form-grid">
+      <label class="field">نام مسیر<input name="name" dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" required></label>
+      <label class="field">نقش<select name="role"><option value="entry">ورودی سمت ایران</option><option value="receiver">گیرندهٔ HTTPS سمت خارج</option></select></label>
+      <label class="field wide">آدرس شنود IPv4 و پورت<input name="listen" dir="ltr" placeholder="127.0.0.1:24105" required></label>
+      <div id="receiver-fields" class="form-grid wide" hidden>
+        <label class="field">دامنه و نام گواهی<input name="domain" placeholder="relay.example.org" dir="ltr"></label>
+        <label class="field">مقصد روی خارج<input name="target" placeholder="127.0.0.1:14105" dir="ltr"></label>
+        <p class="muted hint wide">گواهی و کلید از مسیر استاندارد Let’s Encrypt خوانده می‌شوند.</p>
+      </div>
+      <div id="entry-fields" class="form-grid wide">
+        <label class="field">شنوندهٔ Paqet روی ایران<input name="primary" placeholder="127.0.0.1:14105" dir="ltr"></label>
+        <label class="field">شنوندهٔ Paqet آماده‌به‌کار<input name="backup" placeholder="127.0.0.1:34105" dir="ltr"></label>
+        <label class="field wide">فایل اتصال HTTPS<input id="relay-profile" type="file" accept=".json,application/json"><small class="muted" id="relay-profile-status">اختیاری</small></label>
+        <label class="field">مسیر اولیه<select name="selected"><option value="paqet">Paqet</option><option value="https">HTTPS</option><option value="standby">Paqet آماده‌به‌کار</option></select></label>
+        <label class="field">آزمون مقصد<select name="probe"><option value="tls">پاسخ TLS</option><option value="https">HTTPS با اعتبارسنجی گواهی</option><option value="http">HTTP</option><option value="tcp">فقط اتصال TCP</option></select></label>
+        <label class="field">دامنهٔ سرویس در آزمون HTTP(S)<input name="probe_host" placeholder="service.example.org" dir="ltr"></label>
+        <label class="field">مسیر آزمون HTTP(S)<input name="probe_path" value="/" dir="ltr"></label>
+        <label class="field">سقف اطلاع‌رسانی ماهانه (GiB)<input name="budget" type="number" min="0" max="999999" value="0"></label>
+        <label class="route-check"><input name="automatic" type="checkbox"> جابه‌جایی خودکار پس از دو خطای پیاپی</label>
+      </div>
+      <p class="muted wide route-flow" id="relay-preview" dir="auto"></p>
+      <p class="error wide" id="relay-form-error" role="alert" hidden></p>
+    </div>
+    <div class="modal-foot"><button class="btn primary" type="submit">ذخیره و راه‌اندازی</button></div>
+  </form>
+</dialog>
+
+<dialog id="history-dialog" aria-labelledby="history-title">
+  <div class="modal-head"><h2 id="history-title">تاریخچهٔ پیکربندی</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+  <div class="modal-body">
+    <p class="muted">برای بازیابی یک تغییر دوطرفه، پیش از تغییر روی هر دو پنل با شناسهٔ مشترک نقطه ثبت کنید. وضعیت و بازگردانی هر میزبان از پنل خودش انجام می‌شود.</p>
+    <form id="checkpoint-form" class="form-grid"><label class="field">شناسهٔ مشترک<input name="group" required dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}"></label><div class="route-check"><div class="inventory-actions"><button type="submit" class="btn outline">ثبت نقطهٔ بازیابی</button><button id="checkpoint-receipt" type="button" class="btn outline">دریافت وضعیت میزبان</button></div></div></form>
+    <label class="field">مقایسه با فایل وضعیت میزبان مقابل<input type="file" id="checkpoint-peer" accept=".json,application/json"></label>
+    <p id="checkpoint-comparison" class="route-flow" role="status" hidden></p>
+    <ul class="admin-list" id="history-list"></ul>
+    <pre class="terminal" id="history-diff" dir="ltr" hidden></pre>
+    <p class="error" id="history-error" role="alert" hidden></p>
+  </div>
+</dialog>
+
+<dialog id="rotation-dialog" aria-labelledby="rotation-title">
+  <form id="rotation-form">
+    <div class="modal-head"><h2 id="rotation-title">گردش مرحله‌ای کلید KCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+    <div class="modal-body form-grid">
+      <p class="muted wide" id="rotation-help"></p>
+      <label class="field">نام نمونهٔ جدید<input name="name" required dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}"></label>
+      <label class="field">پورت آزاد نمونهٔ جدید<input name="port" type="number" required min="1024" max="65535" dir="ltr"></label>
+      <label class="field">شناسهٔ مشترک عملیات<input name="group" required dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}"></label>
+      <label class="field" id="rotation-forward-label">ورودی TCP مبنا<select name="forward" dir="ltr"></select></label>
+      <label class="field wide" id="rotation-file-label">فایل گردش کلید از سرور خارج<input id="rotation-profile" type="file" accept=".json,application/json"></label>
+      <p id="rotation-result" class="wide" role="status" hidden></p>
+      <p class="error wide" id="rotation-error" role="alert" hidden></p>
+    </div>
+    <div class="modal-foot"><button class="btn primary" type="submit">ساخت نمونهٔ آماده‌به‌کار</button></div>
+  </form>
+</dialog>
+
+<dialog id="support-dialog" aria-labelledby="support-title">
+  <div class="modal-head"><h2 id="support-title">پیش‌نمایش گزارش قابل‌اشتراک</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+  <div class="modal-body"><pre id="support-text" class="terminal" dir="ltr"></pre></div>
+  <div class="modal-foot"><button id="download-support" class="btn primary">دریافت JSON</button></div>
 </dialog>
 
 <!-- ───────────── Key dialog ───────────── -->

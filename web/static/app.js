@@ -98,7 +98,7 @@ function confirmAction(text, {ok = "ادامه", danger = false} = {}) {
 const states = {active:"فعال", inactive:"متوقف", failed:"ناموفق", activating:"در حال شروع",
   deactivating:"در حال توقف", reloading:"در حال بارگذاری", unregistered:"بدون سرویس"};
 const roles = {server:"سرور", client:"کلاینت"};
-const pages = {overview:"نمای کلی", tunnels:"تونل‌ها", host:"میزبان", servers:"سرورها و آرشیو"};
+const pages = {overview:"نمای کلی", tunnels:"تونل‌ها", relays:"مسیرها و پایش", host:"میزبان", servers:"سرورها و آرشیو"};
 const digits = new Intl.NumberFormat("fa-IR");
 let tunnels = [];
 let selected;
@@ -467,6 +467,8 @@ function selectPage(page) {
   }
   $("#crumb").textContent = pages[page];
   $("#host").hidden = page !== "host";
+  $("#relays").hidden = page !== "relays";
+  if (page === "relays") loadRelays();
   $("#servers").hidden = page !== "servers";
   $("#tunnels").hidden = !["overview", "tunnels"].includes(page);
   if (page === "host") loadReport();
@@ -642,8 +644,9 @@ function addForward() {
     '<label>پورت مقصد<input data-field="target" dir="ltr" type="number" min="1" max="65535" required></label>' +
     '<label>پروتکل<select data-field="protocol" dir="ltr"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP/UDP</option></select></label>' +
     '<button type="button" class="btn ghost icon" aria-label="حذف قانون">' + icon("trash") + '</button>';
-  row.querySelector("button").onclick = () => row.remove();
+  row.querySelector("button").onclick = () => { row.remove(); updateCreatePreview(); };
   $("#forward-rows").append(row);
+  updateCreatePreview();
   row.querySelector("input").focus();
 }
 create.addEventListener("submit", async (event) => {
@@ -747,6 +750,9 @@ function renderDetails() {
   $(".service-actions").hidden = $("#log-head").hidden = $("#logs").hidden = !registered;
   $("#edit-config").hidden = !tunnel.editable;
   $("#edit-forward").hidden = $("#edit-config").hidden || tunnel.role !== "client";
+  $("#config-history").hidden = !tunnel.editable;
+  $("#config-rotation").hidden = !tunnel.editable || !registered ||
+    !(tunnel.role === "server" || tunnel.forwards.some(rule => rule.protocol === "tcp"));
   $("#export-peer").hidden = $("#edit-config").hidden || tunnel.role !== "server";
   $("#restore").hidden = !tunnel.backup;
   $("#refresh-network").hidden = !tunnel.tunable;
@@ -910,11 +916,15 @@ $("#check-route").onclick = async () => {
   const button = $("#check-route");
   button.disabled = true;
   try {
-    const route = await api("tunnels/" + name + "/diagnose");
+    const report = await api("tunnels/" + name + "/preflight");
+    const route = report.route;
     if (selected !== name) return;
     const match = route.matches === true ? "مسیر با تنظیمات تونل هم‌خوان است."
       : route.matches === false ? "رابط یا IP مسیر با تنظیمات تونل فرق دارد." : "پیکربندی رابط برای مقایسه در دسترس نیست.";
-    $("#route-result").textContent = match + "\n" + route.local + " → " + route.next_hop + " → " + route.target + " · " + route.interface;
+    $("#route-result").textContent = match + "\n" + route.local + " → " + route.next_hop + " → " + route.target + " · " + route.interface
+      + "\n" + "MTU هسته " + (report.configured_mtu || "—") + " · MTU رابط " + (report.interface_mtu || "—")
+      + "\n" + ({ok:"بستهٔ ICMP این اندازه عبور کرد.", too_large:"بستهٔ ICMP برای این مسیر بزرگ است.",
+        inconclusive:"پاسخ قطعی به ICMP نرسید.", unavailable:"آزمون ICMP اجرا نشد.", demo:"دادهٔ نمایشی"})[report.df_test];
   } catch (error) {
     if (selected === name) $("#route-result").textContent = error.message;
   } finally {
@@ -1043,6 +1053,7 @@ $("#peer-file").onchange = async (event) => {
     create.elements.conn.value = profile.transport.conn || 1;
     peerTransport = profile.transport;
     $("#peer-status").textContent = "پارامترهای سرور وارد شد. IPv4 عمومی سرور و ورودی‌های کلاینت را مشخص کنید.";
+    updateCreatePreview();
   } catch (error) { showError("#create-error", error.message); }
 };
 $("#export-peer").onclick = async () => {
@@ -1062,6 +1073,9 @@ function openYaml(name, text, revision) {
   yamlRevision = revision;
   yamlForm.elements.name.value = name;
   yamlForm.elements.name.readOnly = Boolean(revision);
+  $("#preview-yaml").hidden = $("#yaml-group-label").hidden = !revision;
+  yamlForm.elements.group.value = "";
+  $("#yaml-diff").hidden = true;
   yamlForm.elements.yaml.value = text;
   showError("#yaml-error");
   $("#yaml-dialog").showModal();
@@ -1081,8 +1095,12 @@ yamlForm.onsubmit = async (event) => {
   const button = yamlForm.querySelector("[type=submit]");
   button.disabled = true;
   try {
-    const path = yamlRevision ? "tunnels/" + data.name + "/config" : "tunnels";
-    await api(path, {...data, revision:yamlRevision});
+    const path = "tunnels/" + data.name;
+    if (yamlRevision && data.group) {
+      await api(path + "/history", {...data, action:"apply_group", revision:yamlRevision});
+    } else {
+      await api(yamlRevision ? path + "/config" : "tunnels", {...data, revision:yamlRevision});
+    }
     $("#yaml-dialog").close();
     await refresh();
     toast("پیکربندی ذخیره شد.");
@@ -1096,8 +1114,9 @@ function editRule(rule = {listen:"0.0.0.0:", target:"127.0.0.1:", protocol:"tcp"
   row.className = "forward-row";
   row.innerHTML = '<label>ورودی کلاینت (IP:port)<input required dir="ltr" name="listen"></label><label>مقصد از سرور (host:port)<input required dir="ltr" name="target"></label><label>پروتکل<select name="protocol"><option>tcp</option><option>udp</option></select></label><button type="button" class="btn outline sm">حذف قانون</button>';
   for (const key of ["listen", "target", "protocol"]) row.querySelector("[name="+key+"]").value = rule[key];
-  row.querySelector("button").onclick = () => row.remove();
+  row.querySelector("button").onclick = () => { row.remove(); updateEditPreview(); };
   $("#edit-forward-rows").append(row);
+  updateEditPreview();
 }
 $("#new-forward-rule").onclick = () => editRule();
 $("#edit-forward").onclick = async () => {
@@ -1107,6 +1126,7 @@ $("#edit-forward").onclick = async () => {
     if (selected !== name || !$("#details").open) return;
     forwardEdit = {name, revision:config.revision};
     $("#edit-forward-rows").replaceChildren();
+    updateEditPreview();
     for (const rule of config.forwards) editRule(rule);
     showError("#forward-error");
     $("#forward-dialog").showModal();
@@ -1155,3 +1175,354 @@ $("#probe-now").onclick = probe;
 $("#probe-listen").onchange = clearProbe;
 $("#probe-live").onchange = () => { if ($("#probe-live").checked) probe(); };
 setInterval(() => { if (!document.hidden && $("#probe-live").checked) probe(); }, 30000);
+
+const relayForm = $("#relay-form");
+const routeNames = {paqet:"Paqet", https:"HTTPS", standby:"Paqet آماده‌به‌کار"};
+let relayProfile, storedRelayPeer, relayLoading = false;
+
+function downloadJson(filename, value) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], {type:"application/json"}));
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+async function jsonFile(input) {
+  const file = input.files[0];
+  if (!file) return undefined;
+  if (file.size > 65536) throw Error("فایل اتصال بیش از ۶۴ کیلوبایت است.");
+  try { return JSON.parse(await file.text()); }
+  catch { throw Error("ساختار JSON فایل اتصال معتبر نیست."); }
+}
+
+function socketLabel(value) {
+  if (!value) return "";
+  return Array.isArray(value) ? (value[0].includes(":") ? "[" + value[0] + "]" : value[0]) + ":" + value[1] : value;
+}
+
+function updateRelayForm() {
+  const {role, listen, target, domain, selected: route, primary, backup, probe, probe_host, probe_path} = relayForm.elements;
+  const receiver = role.value === "receiver";
+  $("#receiver-fields").hidden = !receiver;
+  $("#entry-fields").hidden = receiver;
+  domain.required = target.required = receiver;
+  const http = !receiver && ["http", "https"].includes(probe.value);
+  probe_host.disabled = probe_path.disabled = !http;
+  probe_host.required = http;
+  relayForm.elements.automatic.disabled = !receiver && probe.value === "tcp";
+  if (relayForm.elements.automatic.disabled) relayForm.elements.automatic.checked = false;
+  const peer = relayProfile ? relayProfile.domain + ":" + relayProfile.port : storedRelayPeer ? "گیرندهٔ HTTPS ثبت‌شده" : "فایل گیرنده";
+  const hops = {paqet:primary.value, standby:backup.value, https:peer};
+  $("#relay-preview").textContent = receiver
+    ? [domain.value || "دامنهٔ خارج", listen.value || "شنوندهٔ TLS", target.value || "مقصد محلی"].join(" → ")
+    : ["اتصال کاربر", listen.value || "ورودی ایران", hops[route.value] || routeNames[route.value], "سرویس روی خارج"].join(" → ");
+}
+
+function openRelay(row) {
+  relayForm.reset();
+  relayProfile = undefined;
+  storedRelayPeer = Boolean(row?.has_peer);
+  $("#relay-profile-status").textContent = storedRelayPeer ? "فایل اتصال قبلی حفظ می‌شود." : "اختیاری";
+  for (const key of ["name", "role", "listen", "domain", "target", "primary", "backup", "probe", "probe_host", "probe_path", "budget"]) {
+    if (row?.[key] !== undefined) relayForm.elements[key].value = socketLabel(row[key]) || relayForm.elements[key].value;
+  }
+  relayForm.elements.selected.value = row?.configured || "paqet";
+  relayForm.elements.automatic.checked = Boolean(row?.automatic);
+  relayForm.elements.name.readOnly = Boolean(row);
+  relayForm.elements.role.disabled = Boolean(row);
+  showError("#relay-form-error");
+  updateRelayForm();
+  $("#relay-dialog").showModal();
+}
+
+$("#add-relay").onclick = () => openRelay();
+relayForm.oninput = updateRelayForm;
+$("#relay-profile").onchange = async (event) => {
+  relayProfile = undefined;
+  showError("#relay-form-error");
+  try {
+    const result = await jsonFile(event.target);
+    if (result && result.format !== "paqet-https-v1") throw Error("فایل از گیرندهٔ HTTPS صادر نشده است.");
+    relayProfile = result;
+  } catch (error) { showError("#relay-form-error", error.message); }
+  $("#relay-profile-status").textContent = relayProfile?.domain || (storedRelayPeer ? "فایل قبلی حفظ می‌شود." : "اختیاری");
+  updateRelayForm();
+};
+relayForm.onsubmit = async (event) => {
+  event.preventDefault();
+  const button = relayForm.querySelector("[type=submit]");
+  button.disabled = true;
+  try {
+    await api("relays", {...Object.fromEntries(new FormData(relayForm)), action:"save",
+      role:relayForm.elements.role.value, automatic:relayForm.elements.automatic.checked,
+      peer:relayProfile, keep_peer:storedRelayPeer});
+    $("#relay-dialog").close();
+    toast("مسیر ذخیره شد.");
+    await loadRelays();
+  } catch (error) { showError("#relay-form-error", error.message); }
+  finally { button.disabled = false; }
+};
+
+async function operateRelay(row, action, extra = {}) {
+  showError("#relay-error");
+  try {
+    const result = await api("relays", {name:row.name, action, ...extra});
+    if (action === "profile") downloadJson(row.name + "-https-peer.json", result);
+    else await loadRelays();
+  } catch (error) { showError("#relay-error", error.message); }
+}
+
+function addRelayInfo(container, title, detail, direction = "auto") {
+  const line = document.createElement("p");
+  const heading = document.createElement("strong");
+  const text = document.createElement("bdi");
+  heading.textContent = title + " ";
+  text.dir = direction;
+  text.textContent = detail;
+  line.append(heading, text);
+  container.append(line);
+}
+
+function relayCard(row, demo) {
+  const card = document.createElement("article");
+  card.className = "card relay-card";
+  const heading = document.createElement("div");
+  heading.className = "card-head";
+  const title = document.createElement("h2");
+  title.dir = "auto";
+  title.textContent = row.name;
+  heading.append(title);
+  listButton(heading, "ویرایش", () => openRelay(row));
+  card.append(heading);
+  const body = document.createElement("div");
+  body.className = "card-body relay-body";
+  card.append(body);
+  const status = demo ? "نمایشی" : row.online ? "شنونده فعال" : "شنونده در دسترس نیست";
+  addRelayInfo(body, status, row.listen, "ltr");
+  const actions = document.createElement("div");
+  actions.className = "inventory-actions";
+  if (row.role === "receiver") {
+    addRelayInfo(body, "گیرندهٔ HTTPS", row.domain + " → " + socketLabel(row.target), "ltr");
+    listButton(actions, "دریافت فایل اتصال", () => operateRelay(row, "profile"));
+  } else {
+    addRelayInfo(body, "مسیر فعال", routeNames[row.selected] + (row.automatic ? " · جابه‌جایی خودکار" : ""));
+    if (row.switched) addRelayInfo(body, "آخرین جابه‌جایی", new Date(row.switched * 1000).toLocaleString("fa-IR"));
+    const used = (row.bytes / 1073741824).toFixed(3);
+    const forecast = row.projected_days == null ? "" : row.projected_days <= new Date().getUTCDate()
+      ? " · با نرخ فعلی در محدودهٔ روز جاری یا زودتر" : " · برآورد روز " + digits.format(Math.ceil(row.projected_days)) + " از ابتدای دوره";
+    addRelayInfo(body, "مصرف ماه UTC " + row.month, used + " GiB" +
+      (row.budget ? " / " + row.budget + " GiB" + (Number(used) >= row.budget ? " · سقف رد شد" : forecast) : ""));
+    addRelayInfo(body, "اتصال‌های باز", digits.format(row.connections));
+    const list = document.createElement("ul");
+    list.className = "admin-list route-tests";
+    for (const route of row.routes) {
+      const result = row.tests[route];
+      const comparison = row.comparison?.results?.[route];
+      const status = result ? (result.ok ? result.ms + " ms" : "خطا") + " · " +
+        new Date(result.time * 1000).toLocaleTimeString("fa-IR") : "در انتظار پایش";
+      const entry = listEntry(list, routeNames[route], status);
+      if (comparison) addRelayInfo(entry, "مقایسه", comparison.ok + "/" + comparison.total + " پاسخ · " +
+        (comparison.p50_ms == null ? "—" : comparison.p50_ms + " ms") + " · بار آزمون " + comparison.load_bytes + " B");
+      if (row.selected !== route) listButton(entry, "اعمال برای اتصال‌های جدید", () => operateRelay(row, "select", {route}));
+    }
+    body.append(list);
+    if (row.routes.length > 1 && !demo) {
+      if (row.comparison?.status === "running") addRelayInfo(body, "مقایسه", "در حال اجرا");
+      else listButton(actions, "مقایسهٔ مسیرها", () => operateRelay(row, "compare"));
+      if (row.comparison?.status === "error") addRelayInfo(body, "مقایسه", "اندازه‌گیری ناموفق بود.");
+    }
+    if (row.history.length) {
+      const history = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "نتایج اخیر پایش";
+      history.append(summary);
+      for (const item of row.history.slice(-12).reverse()) {
+        addRelayInfo(history, new Date(item.time * 1000).toLocaleTimeString("fa-IR"),
+          Object.entries(item.tests).map(([route, result]) => routeNames[route] + " · " + (result.ok ? result.ms + " ms" : "خطا")).join(" | "));
+      }
+      body.append(history);
+    }
+  }
+  listButton(actions, "حذف مسیر", async () => {
+    if (await confirmAction("شنوندهٔ این مسیر بسته شود؟", {ok:"حذف", danger:true})) await operateRelay(row, "remove");
+  });
+  body.append(actions);
+  return card;
+}
+
+let lastRelays;
+async function loadRelays() {
+  if (relayLoading || $("#relays").hidden) return;
+  relayLoading = true;
+  try {
+    const data = await api("relays");
+    const hash = JSON.stringify(data);
+    if (hash === lastRelays) return;
+    lastRelays = hash;
+    const list = $("#relay-list");
+    list.replaceChildren(...data.rows.map(row => relayCard(row, data.demo)));
+    if (!data.rows.length) addRelayInfo(list, "هنوز مسیری ثبت نشده است.", "برای آزمایش، مسیر جدید بسازید.");
+  } catch (error) { showError("#relay-error", error.message); }
+  finally { relayLoading = false; }
+}
+setInterval(() => { if (!document.hidden && !$("#workspace").hidden) loadRelays(); }, 5000);
+
+let historyName;
+let historyRevision;
+async function loadHistory() {
+  const {entries, revision} = await api("tunnels/" + historyName + "/history");
+  historyRevision = revision;
+  const list = $("#history-list");
+  list.replaceChildren();
+  if (!entries.length) listEntry(list, "هنوز نسخه‌ای ثبت نشده است.");
+  for (const point of entries) {
+    const row = listEntry(list, [point.group || "ویرایش محلی", new Date(point.time * 1000).toLocaleString("fa-IR")].join(" · "), point.revision.slice(0, 12));
+    const data = {id:point.id, point:point.revision, revision:historyRevision};
+    listButton(row, "نمایش تفاوت", async () => {
+      try {
+        const {diff} = await api("tunnels/" + historyName + "/history", {...data, action:"diff"});
+        const output = $("#history-diff");
+        output.textContent = diff || "تفاوتی در فیلدهای قابل نمایش وجود ندارد.";
+        output.hidden = false;
+      } catch (error) { showError("#history-error", error.message); }
+    });
+    listButton(row, "بازیابی نسخه", async () => {
+      if (!await confirmAction("این نسخه بازیابی شود؟ سرویس فعال دوباره راه‌اندازی خواهد شد.", {ok:"بازیابی"})) return;
+      try {
+        await api("tunnels/" + historyName + "/history", {...data, action:"restore"});
+        $("#history-diff").hidden = true;
+        await loadHistory();
+        await refresh();
+        toast("نسخه بازیابی شد.");
+      } catch (error) { showError("#history-error", error.message); }
+    });
+  }
+}
+$("#config-history").onclick = async () => {
+  historyName = selected;
+  $("#checkpoint-form").reset();
+  $("#checkpoint-peer").value = "";
+  $("#checkpoint-comparison").hidden = $("#history-diff").hidden = true;
+  showError("#history-error");
+  try { await loadHistory(); $("#history-dialog").showModal(); }
+  catch (error) { showError("#detail-error", error.message); }
+};
+$("#checkpoint-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  try {
+    await api("tunnels/" + historyName + "/history", {action:"checkpoint", group:form.elements.group.value});
+      await loadHistory();
+    toast("نقطهٔ بازیابی ثبت شد.");
+  } catch (error) { showError("#history-error", error.message); }
+};
+
+$("#preview-yaml").onclick = async () => {
+  try {
+    const {diff} = await api("tunnels/" + yamlForm.elements.name.value + "/history",
+      {action:"preview", yaml:yamlForm.elements.yaml.value});
+    const output = $("#yaml-diff");
+    output.textContent = diff || "تفاوتی در فیلدهای قابل نمایش وجود ندارد.";
+    output.hidden = false;
+  } catch (error) { showError("#yaml-error", error.message); }
+};
+
+const rotationForm = $("#rotation-form");
+let rotationTunnel, rotationRevision;
+$("#config-rotation").onclick = async () => {
+  const tunnel = tunnels.find(row => row.name === selected);
+  if (!tunnel) return;
+  try {
+    const result = await api("tunnels/" + tunnel.name + "/history");
+    rotationTunnel = tunnel;
+    rotationRevision = result.revision;
+    rotationForm.reset();
+    const server = tunnel.role === "server";
+    $("#rotation-forward-label").hidden = $("#rotation-file-label").hidden = server;
+    $("#rotation-profile").required = !server;
+    rotationForm.elements.forward.replaceChildren(...tunnel.forwards.filter(rule => rule.protocol === "tcp")
+      .map(rule => new Option(rule.listen + " → " + rule.target, rule.listen)));
+    $("#rotation-help").textContent = server
+      ? "یک نام و پورت تازه وارد کنید. فایل خروجی را از طریق نشست مدیریتی به پنل کلاینت بدهید."
+      : "فایل سرور را وارد کنید. پس از آزمون، ورودی loopback تازه را در بخش مسیرها به‌عنوان Paqet آماده‌به‌کار انتخاب کنید.";
+    $("#rotation-result").hidden = true;
+    showError("#rotation-error");
+    $("#rotation-dialog").showModal();
+  } catch (error) { showError("#detail-error", error.message); }
+};
+rotationForm.onsubmit = async event => {
+  event.preventDefault();
+  const button = rotationForm.querySelector("[type=submit]");
+  button.disabled = true;
+  try {
+    const profile = await jsonFile($("#rotation-profile"));
+    const result = await api("tunnels/" + rotationTunnel.name + "/rotation",
+      {...Object.fromEntries(new FormData(rotationForm)), revision:rotationRevision, profile});
+    if (result.profile) downloadJson(result.name + "-rotation.json", result.profile);
+    $("#rotation-result").textContent = result.listen ? "ورودی تازه " + result.listen : "فایل گردش کلید آماده شد.";
+    $("#rotation-result").hidden = false;
+    await refresh();
+  } catch (error) { showError("#rotation-error", error.message); }
+  finally { button.disabled = false; }
+};
+
+let supportReport;
+$("#share-diagnostic").onclick = async () => {
+  try {
+    supportReport = await api("tunnels/" + selected + "/diagnostic");
+    $("#support-text").textContent = JSON.stringify(supportReport, null, 2);
+    $("#support-dialog").showModal();
+  } catch (error) { showError("#detail-error", error.message); }
+};
+$("#download-support").onclick = () => { if (supportReport) downloadJson("paqet-diagnostic.json", supportReport); };
+
+function renderForwardPreview(selector, rows, server) {
+  const output = $(selector);
+  output.textContent = rows.map(([from, to]) => [from, server, to].join(" → ")).join("\n");
+  output.hidden = !rows.length;
+}
+
+function updateCreatePreview() {
+  const server = (create.elements.remote.value || "IPv4") + ":" + (create.elements.port.value || "KCP");
+  const rows = Array.from($("#forward-rows").children, row => {
+    const field = key => row.querySelector("[data-field=" + key + "]").value;
+    return [field("listen_ip") + ":" + (field("listen") || "?"), field("target_ip") + ":" + (field("target") || "?")];
+  });
+  renderForwardPreview("#create-route-preview", rows, server);
+}
+create.addEventListener("input", updateCreatePreview);
+
+function updateEditPreview() {
+  const rows = Array.from($("#edit-forward-rows").children,
+    row => [row.querySelector("[name=listen]").value, row.querySelector("[name=target]").value]);
+  renderForwardPreview("#edit-route-preview", rows, tunnels.find(row => row.name === selected)?.endpoint || "Paqet");
+}
+$("#edit-forward-rows").addEventListener("input", updateEditPreview);
+
+async function checkpointReceipt(group) {
+  return api("tunnels/" + historyName + "/history", {action:"receipt", group});
+}
+$("#checkpoint-receipt").onclick = async () => {
+  const group = $("#checkpoint-form").elements.group;
+  if (!group.reportValidity()) return;
+  try { downloadJson(group.value + "-status.json", await checkpointReceipt(group.value)); }
+  catch (error) { showError("#history-error", error.message); }
+};
+$("#checkpoint-peer").onchange = async (event) => {
+  const output = $("#checkpoint-comparison");
+  output.hidden = true;
+  showError("#history-error");
+  try {
+    const peer = await jsonFile(event.target);
+    if (!peer) return;
+    const status = {changed:"تغییر کرده", at_checkpoint:"در نسخهٔ نقطهٔ بازیابی"};
+    if (peer.format !== "paqet-checkpoint-v1" || !Object.hasOwn(status, peer.status) ||
+        !["server", "client"].includes(peer.role)) throw Error("فایل وضعیت معتبر نیست.");
+    const current = await checkpointReceipt(peer.group);
+    if (peer.role === current.role) throw Error("فایل باید از سمت دیگر تونل صادر شده باشد.");
+    output.textContent = "شناسهٔ " + current.group + " · این میزبان " + status[current.status] +
+      " · میزبان مقابل در زمان صدور فایل " + status[peer.status];
+    output.hidden = false;
+  } catch (error) { showError("#history-error", error.message); }
+};

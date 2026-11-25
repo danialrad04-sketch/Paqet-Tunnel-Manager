@@ -14,6 +14,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 from http.cookies import SimpleCookie
@@ -276,6 +277,8 @@ class Manager:
     def __init__(self, demo, panel_port=8765):
         self.demo = demo
         self.panel_port = panel_port
+        from operations import Operations
+        self.operations = Operations(self)
         self.samples, self.demo_backups, self.demo_archive, self.demo_hosts = {}, {}, {}, []
         self.demo_region = "ir"
         if demo:
@@ -381,6 +384,7 @@ class Manager:
         if not self.has_backup(name):
             raise Problem("نقطهٔ بازیابی پیدا نشد.")
         if self.demo:
+            self.operations.remember(name, self.full_config(name)["yaml"], "restore")
             config, status, enabled = self.samples[name]
             config = self.demo_backups.pop(name)
             self.samples[name] = (config, status, enabled)
@@ -396,6 +400,7 @@ class Manager:
         point = json.loads(backup.read_text())
         if hashlib.sha256(original.encode()).hexdigest() != point.get("updated"):
             raise Problem("تنظیمات پس از ساخت نقطهٔ بازیابی تغییر کرده است.")
+        self.operations.remember(name, original, "restore")
         atomic(path, point["original"], 0o600)
         self.apply_change(name, path, original, row["state"] == "active")
         backup.unlink()
@@ -538,6 +543,7 @@ WantedBy=multi-user.target
             raise Problem("برای تغییر نقش، سرویس جدید ایجاد کنید.")
         self.check_configuration(name, new)
         if self.demo:
+            self.operations.remember(name, current["yaml"])
             config, state, enabled = self.samples[name]
             self.demo_backups[name] = deepcopy(config)
             self.samples[name] = (new, state, enabled)
@@ -645,6 +651,7 @@ WantedBy=multi-user.target
         if level is not None and level not in ("", "none", "debug", "info", "warn", "error", "fatal"):
             raise Problem("سطح گزارش معتبر نیست.")
         if self.demo:
+            self.operations.remember(name, self.full_config(name)["yaml"])
             self.demo_backups[name] = deepcopy(config)
         for field in (*KCP_NUMERIC, *KCP_BOOLEAN):
             if data.get(field) == "":
@@ -706,6 +713,7 @@ WantedBy=multi-user.target
         detected = ("eth0", "192.0.2.10", "02:00:00:00:00:01") if self.demo else network(target)
         interface, address, mac = detected
         if self.demo:
+            self.operations.remember(name, self.full_config(name)["yaml"])
             self.demo_backups[name] = deepcopy(config)
         settings = mapping(config.get("network"))
         settings["interface"] = interface
@@ -715,6 +723,7 @@ WantedBy=multi-user.target
             self.save_config(name, path, original, config, active)
 
     def save_config(self, name, path, original, config, active, text=None):
+        self.operations.remember(name, original)
         backup = self.backup_path(name)
         backup.parent.mkdir(mode=0o700, exist_ok=True)
         updated = text if text is not None else yaml.safe_dump(config, sort_keys=False)
@@ -1028,6 +1037,22 @@ class Panel(BaseHTTPRequestHandler):
                 self.answer(200, {}, "paqet_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
             elif method == "GET" and path == "/api/overview":
                 self.answer(200, manager.health())
+            elif method == "GET" and path == "/api/relays":
+                self.answer(200, self.server.relay.call("view"))
+            elif method == "POST" and path == "/api/relays":
+                data = self.payload()
+                action = data.get("action")
+                if action in ("save", "remove"):
+                    result = self.server.relay.call("change", action, data)
+                elif action == "select":
+                    result = self.server.relay.call("select", data.get("name"), data.get("route"))
+                elif action == "compare":
+                    result = self.server.relay.call("start_comparison", data.get("name"))
+                elif action == "profile":
+                    result = self.server.relay.call("peer", data.get("name"))
+                else:
+                    raise Problem("عملیات مسیر معتبر نیست.")
+                self.answer(200, result or {})
             elif method == "GET" and path == "/api/host-report":
                 self.answer(200, manager.host_report())
             elif method == "GET" and path == "/api/archives":
@@ -1047,12 +1072,20 @@ class Panel(BaseHTTPRequestHandler):
                 created = manager.create(self.payload())
                 logging.info("Provisioned %s", unit(created["name"]))
                 self.answer(201, created)
-            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network|config|pair|forwards|probe)", path)):
+            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network|config|pair|forwards|probe|history|rotation|preflight|diagnostic)", path)):
                 name, operation = match.groups()
-                if operation not in ("config", "forwards", "pair", "restore") and name not in manager.names():
+                if operation not in ("config", "forwards", "pair", "restore", "history", "diagnostic") and name not in manager.names():
                     self.answer(404, {"error": "تونل پیدا نشد."})
                 elif operation == "config" and method == "GET":
                     self.answer(200, manager.full_config(name))
+                elif operation == "history":
+                    self.answer(200, manager.operations.config_view(name, self.payload() if method == "POST" else None))
+                elif operation == "rotation" and method == "POST":
+                    self.answer(201, manager.operations.rotation(name, self.payload()))
+                elif operation == "preflight" and method == "GET":
+                    self.answer(200, manager.operations.preflight(name))
+                elif operation == "diagnostic" and method == "GET":
+                    self.answer(200, manager.operations.diagnostic(name))
                 elif operation == "forwards" and method == "POST":
                     edit = self.payload()
                     current = manager.full_config(name)
@@ -1144,6 +1177,9 @@ class LocalServer(HTTPServer):
 
 
 def main():
+    sys.modules.setdefault("panel", sys.modules[__name__])
+    from relay import Relay
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--port", type=int, default=8765)
@@ -1162,6 +1198,7 @@ def main():
         server.public_http = not options.bind.is_loopback
         port = server.server_port
         server.manager = Manager(options.demo, port)
+        server.relay = Relay(STATE, options.demo, port)
         server.token_hash = hashlib.sha256(token.encode()).digest()
         server.sessions, server.attempts = {}, []
         print(f"Listening on {bind}:{port}", flush=True)
