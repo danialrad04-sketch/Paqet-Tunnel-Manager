@@ -105,11 +105,12 @@ PY
     fi
 fi
 
-install -d -m 0755 /opt/paqet-panel /opt/paqet-panel/static
+install -d -m 0755 /opt/paqet-panel /opt/paqet-panel/static /opt/paqet-panel/static/fonts
 install -d -m 0700 /etc/paqet-panel
 install -m 0644 "$source_dir/web/panel.py" /opt/paqet-panel/panel.py
 install -m 0755 "$source_dir/web/packet-rules.sh" /opt/paqet-panel/packet-rules.sh
-install -m 0644 "$source_dir"/web/static/* /opt/paqet-panel/static/
+install -m 0644 "$source_dir"/web/static/*.html "$source_dir"/web/static/*.css "$source_dir"/web/static/*.js /opt/paqet-panel/static/
+install -m 0644 "$source_dir"/web/static/fonts/* /opt/paqet-panel/static/fonts/
 if [[ ! -e /etc/paqet-panel/token ]]; then
     (umask 077; /usr/bin/python3 -c 'import secrets; print(secrets.token_urlsafe(40))' > /etc/paqet-panel/token)
 fi

@@ -27,6 +27,7 @@ UNITS = Path("/etc/systemd/system")
 STATE = Path("/etc/paqet-panel")
 CORE = Path("/usr/local/bin/paqet")
 STATIC = Path(__file__).resolve().parent / "static"
+FONTS = {"/fonts/vazirmatn.woff2": "vazirmatn.woff2", "/fonts/jetbrains-mono.woff2": "jetbrains-mono.woff2"}
 NAME = r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}"
 EXISTING_NAME = r"[a-zA-Z0-9_-]{1,241}"
 MODES = ("normal", "fast", "fast2", "fast3")
@@ -898,11 +899,11 @@ class Panel(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def send_data(self, status, data, content_type, cookie=None):
+    def send_data(self, status, data, content_type, cookie=None, cache="no-store"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy",
@@ -952,6 +953,9 @@ class Panel(BaseHTTPRequestHandler):
                 filename, mime = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
                                   "/styles.css": ("styles.css", "text/css")}[path]
                 self.send_data(200, (STATIC / filename).read_bytes(), f"{mime}; charset=utf-8")
+            elif method == "GET" and path in FONTS:
+                self.send_data(200, (STATIC / "fonts" / FONTS[path]).read_bytes(), "font/woff2",
+                               cache="public, max-age=2592000, immutable")
             elif method == "GET" and path == "/api/session":
                 self.answer(200, {"authenticated": self.authenticated(), "demo": manager.demo})
             elif method == "POST" and path == "/api/login":
