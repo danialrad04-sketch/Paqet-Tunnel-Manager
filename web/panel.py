@@ -1,5 +1,6 @@
 """Local Paqet administration and isolated UI demo."""
 import argparse
+from collections import Counter
 from copy import deepcopy
 import hashlib
 import hmac
@@ -9,6 +10,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -160,6 +162,11 @@ def mapping(value):
     return value if isinstance(value, dict) else {}
 
 
+def service_config_path(command):
+    match = re.search(r"(?:^|\s)(?:-c|--config)(?:\s+|=)([^\s;]+)", command)
+    return Path(match.group(1)) if match else None
+
+
 def config_role(config):
     role = config.get("role")
     if role in ("server", "client"):
@@ -219,7 +226,7 @@ class Manager:
     def __init__(self, demo, panel_port=8765):
         self.demo = demo
         self.panel_port = panel_port
-        self.samples, self.demo_backups = {}, {}
+        self.samples, self.demo_backups, self.demo_archive, self.demo_hosts = {}, {}, {}, []
         self.demo_region = "ir"
         if demo:
             for name, role, state, address in [
@@ -251,11 +258,11 @@ class Manager:
     def inventory(self):
         names = self.names()
         if self.demo:
-            return [summary(name, *self.samples[name]) for name in names]
-        rows = {}
+            return [dict(summary(name, *self.samples[name]), archivable=True) for name in names]
+        rows, config_references = {}, {}
         for offset in range(0, len(names), 100):
             output = systemctl("show", "-p",
-                               "Id,ActiveState,UnitFileState,ExecStart,NRestarts,MainPID,Result,ActiveEnterTimestamp",
+                               "Id,ActiveState,UnitFileState,ExecStart,NRestarts,MainPID,Result,ActiveEnterTimestamp,FragmentPath,DropInPaths",
                                *(unit(name) for name in names[offset:offset + 100])).stdout
             for block in output.strip().split("\n\n"):
                 values = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
@@ -265,13 +272,24 @@ class Manager:
                 name = match.group(1)
                 default = CONFIG / f"{name}.yaml"
                 command = values.get("ExecStart", "")
-                target = re.search(r"(?:^|\s)(?:-c|--config)(?:\s+|=)([^\s;]+)", command)
-                path = Path(target.group(1)) if target else None
+                path = service_config_path(command)
                 accessible = path and path.parent == CONFIG and path.suffix in (".yaml", ".yml")
                 source = "default" if path == default else "alternate" if accessible else "unresolved"
+                config_references[name] = (path.resolve() if accessible else None)
                 rows[name] = summary(name, self.config(name, path) if accessible else {},
                                      values.get("ActiveState", "unknown"),
                                      values.get("UnitFileState") in ("enabled", "enabled-runtime"), values, source)
+                fragment = UNITS / unit(name)
+                rows[name]["archivable"] = (
+                    source == "default" and default.is_file() and not default.is_symlink()
+                    and values.get("FragmentPath") == str(fragment) and fragment.is_file()
+                    and not fragment.is_symlink() and not values.get("DropInPaths")
+                    and values.get("UnitFileState") in ("enabled", "disabled")
+                    and rows[name]["state"] in ("active", "inactive", "failed"))
+        references = Counter(config_references.values())
+        for name, row in rows.items():
+            if row["archivable"] and references[config_references[name]] != 1:
+                row["archivable"] = False
         for path in sorted(CONFIG.glob("*.y*ml")):
             if path.suffix in (".yaml", ".yml") and re.fullmatch(EXISTING_NAME, path.stem) and path.stem not in rows:
                 config = self.config(path.stem, path)
@@ -307,7 +325,7 @@ class Manager:
             raise Problem("نقطهٔ بازیابی پیدا نشد.")
         if self.demo:
             config, status, enabled = self.samples[name]
-            config["transport"] = self.demo_backups.pop(name)
+            config = self.demo_backups.pop(name)
             self.samples[name] = (config, status, enabled)
             return
         row = next((row for row in self.inventory() if row["name"] == name), {})
@@ -344,7 +362,7 @@ class Manager:
         if config["role"] == "server":
             result["key"] = config["transport"]["kcp"]["key"]
         if self.demo:
-            if name in self.samples:
+            if name in self.samples or name in self.demo_archive:
                 raise Problem("این نام قبلاً ثبت شده است.")
             self.samples[name] = (config, "active", True)
             return result
@@ -353,7 +371,7 @@ class Manager:
         config_path = CONFIG / f"{name}.yaml"
         unit_path = UNITS / unit(name)
         names = self.names()
-        if os.path.lexists(config_path.with_suffix(".yml")) or os.path.lexists(config_path) or os.path.lexists(unit_path) or name in names:
+        if name in self.archives() or os.path.lexists(config_path.with_suffix(".yml")) or os.path.lexists(config_path) or os.path.lexists(unit_path) or name in names:
             raise Problem("این نام قبلاً در تنظیمات یا systemd ثبت شده است.")
         server = config["role"] == "server"
         if server:
@@ -428,8 +446,26 @@ WantedBy=multi-user.target
             raise Problem("حالت KCP معتبر نیست.")
         mtu = number(data.get("mtu"), 576, 1500, "MTU")
         conn = number(data.get("conn"), 1, 64, "اتصال KCP")
+        path, original, config, active = self.editable_config(name)
+        transport = mapping(config.get("transport"))
+        kcp = mapping(transport.get("kcp"))
+        if not kcp or config.get("role") not in ("server", "client"):
+            raise Problem("پارامترهای KCP این سرویس پیدا نشد.")
+        if kcp.get("mode") == "manual" and mode:
+            raise Problem("برای تنظیمات دستی، حالت فعلی را نگه دارید.")
+        if self.demo:
+            self.demo_backups[name] = deepcopy(config)
+        if mode:
+            kcp["mode"] = mode
+        kcp["mtu"] = mtu
+        transport["conn"] = conn
+        if not self.demo:
+            self.save_config(name, path, original, config, active)
+
+    def editable_config(self, name):
         path = CONFIG / f"{name}.yaml"
         original = None
+        row = {}
         if self.demo:
             config, _, _ = self.samples[name]
         else:
@@ -444,20 +480,32 @@ WantedBy=multi-user.target
                 config = mapping(yaml.safe_load(original))
             except yaml.YAMLError as error:
                 raise Problem("فایل تنظیمات YAML معتبر نیست.") from error
-        transport = mapping(config.get("transport"))
-        kcp = mapping(transport.get("kcp"))
-        if not kcp or config.get("role") not in ("server", "client"):
-            raise Problem("پارامترهای KCP این سرویس پیدا نشد.")
-        if kcp.get("mode") == "manual" and mode:
-            raise Problem("برای تنظیمات دستی، حالت فعلی را نگه دارید.")
+        return path, original, config, row.get("state") == "active"
+
+    def refresh_network(self, name):
+        path, original, config, active = self.editable_config(name)
+        role = config.get("role")
+        if role == "server":
+            port = number(str(mapping(config.get("listen")).get("addr", "")).rsplit(":", 1)[-1],
+                          1, 65535, "پورت شنود")
+            target = None
+        elif role == "client":
+            port = 0
+            target = ipv4(str(mapping(config.get("server")).get("addr", "")).rsplit(":", 1)[0])
+        else:
+            raise Problem("نقش این تونل مشخص نیست.")
+        detected = ("eth0", "192.0.2.10", "02:00:00:00:00:01") if self.demo else network(target)
+        interface, address, mac = detected
         if self.demo:
-            self.demo_backups[name] = deepcopy(transport)
-        if mode:
-            kcp["mode"] = mode
-        kcp["mtu"] = mtu
-        transport["conn"] = conn
-        if self.demo:
-            return
+            self.demo_backups[name] = deepcopy(config)
+        settings = mapping(config.get("network"))
+        settings["interface"] = interface
+        settings["ipv4"] = {**mapping(settings.get("ipv4")), "addr": f"{address}:{port}", "router_mac": mac}
+        config["network"] = settings
+        if not self.demo:
+            self.save_config(name, path, original, config, active)
+
+    def save_config(self, name, path, original, config, active):
         backup = self.backup_path(name)
         backup.parent.mkdir(mode=0o700, exist_ok=True)
         updated = yaml.safe_dump(config, sort_keys=False)
@@ -466,13 +514,159 @@ WantedBy=multi-user.target
         atomic(backup, json.dumps(point), 0o600)
         try:
             atomic(path, updated, 0o600)
-            self.apply_change(name, path, original, row["state"] == "active")
+            self.apply_change(name, path, original, active)
         except (OSError, Problem, subprocess.SubprocessError):
             if old_point is None:
                 backup.unlink(missing_ok=True)
             else:
                 atomic(backup, old_point, 0o600)
             raise
+
+    def archive_path(self, name):
+        return STATE / "archives" / f"{name}.json"
+
+    def archives(self):
+        if self.demo:
+            return sorted(self.demo_archive)
+        return sorted(path.stem for path in (STATE / "archives").glob("*.json")
+                      if re.fullmatch(EXISTING_NAME, path.stem))
+
+    def archive(self, name, confirmation):
+        if confirmation != name:
+            raise Problem("برای تأیید حذف، نام دقیق تونل را وارد کنید.")
+        row = next((row for row in self.inventory() if row["name"] == name), {})
+        if not row.get("archivable") or name in self.archives():
+            raise Problem("این سرویس برای حذف قابل تأیید نیست یا قبلاً آرشیو شده است.")
+        if self.demo:
+            self.demo_archive[name] = (self.samples.pop(name), self.demo_backups.pop(name, None))
+            return
+        config, fragment, archive = CONFIG / f"{name}.yaml", UNITS / unit(name), self.archive_path(name)
+        standalone = systemctl("show", "-p", "ExecStart", "--value", "paqet.service", required=False)
+        standalone_config = service_config_path(standalone.stdout)
+        if standalone_config and standalone_config.is_absolute() and standalone_config.resolve() == config.resolve():
+            raise Problem("سرویس paqet.service هم از فایل تنظیمات این تونل استفاده می‌کند.")
+        record = {"config": config.read_text(), "unit": fragment.read_text(),
+                  "enabled": row["enabled"], "active": row["state"] == "active"}
+        archive.parent.mkdir(mode=0o700, exist_ok=True)
+        atomic(archive, json.dumps(record), 0o600)
+        removed = []
+        try:
+            systemctl("disable", "--now", unit(name))
+            for path, key, mode in ((fragment, "unit", 0o644), (config, "config", 0o600)):
+                path.unlink()
+                removed.append((path, key, mode))
+            systemctl("daemon-reload")
+        except (OSError, Problem, subprocess.SubprocessError):
+            for path, key, mode in removed:
+                atomic(path, record[key], mode)
+            systemctl("daemon-reload")
+            self.restore_service_state(name, record)
+            archive.unlink()
+            raise
+
+    @staticmethod
+    def restore_service_state(name, record):
+        if record["enabled"]:
+            systemctl("enable", unit(name))
+        if record["active"]:
+            systemctl("start", unit(name))
+
+    def unarchive(self, name):
+        if name not in self.archives():
+            raise Problem("تونل در آرشیو پیدا نشد.")
+        if self.demo:
+            sample, backup = self.demo_archive.pop(name)
+            self.samples[name] = sample
+            if backup is not None:
+                self.demo_backups[name] = backup
+            return
+        config, fragment, archive = CONFIG / f"{name}.yaml", UNITS / unit(name), self.archive_path(name)
+        if any(os.path.lexists(path) for path in (config, config.with_suffix(".yml"), fragment)) or name in self.names():
+            raise Problem("هم‌اکنون فایل یا سرویس دیگری با همین نام وجود دارد.")
+        record = json.loads(archive.read_text())
+        try:
+            data = mapping(yaml.safe_load(record["config"]))
+        except yaml.YAMLError:
+            data = {}
+        if config_role(data)[0] == "server":
+            port = str(mapping(data.get("listen")).get("addr", "")).rsplit(":", 1)[-1]
+            if port == str(self.panel_port) or any(row["role"] == "server" and
+                    row["endpoint"].rsplit(":", 1)[-1] == port for row in self.inventory()):
+                raise Problem("پورت تونل آرشیوشده اکنون در استفاده است.")
+        CONFIG.mkdir(mode=0o755, exist_ok=True)
+        created = []
+        try:
+            for path, key, mode in ((config, "config", 0o600), (fragment, "unit", 0o644)):
+                atomic(path, record[key], mode)
+                created.append(path)
+            systemctl("daemon-reload")
+            self.restore_service_state(name, record)
+            if record["active"]:
+                time.sleep(0.7)
+                systemctl("is-active", "--quiet", unit(name))
+            archive.unlink()
+        except (OSError, Problem, subprocess.SubprocessError):
+            if fragment in created:
+                systemctl("disable", "--now", unit(name), required=False)
+            for path in reversed(created):
+                path.unlink(missing_ok=True)
+            systemctl("daemon-reload", required=False)
+            raise
+
+    def hosts(self):
+        if self.demo:
+            return self.demo_hosts
+        try:
+            return json.loads((STATE / "hosts.json").read_text())
+        except FileNotFoundError:
+            return []
+
+    def change_hosts(self, data):
+        address = ipv4(data.get("address"))
+        port = number(data.get("port"), 1, 65535, "پورت")
+        hosts = self.hosts()
+        keys = {(address, port)}
+        action = data.get("action")
+        if action == "save" and isinstance(data.get("previous"), dict):
+            previous = data["previous"]
+            keys.add((ipv4(previous.get("address")), number(previous.get("port"), 1, 65535, "پورت")))
+        updated = [host for host in hosts if (host["address"], host["port"]) not in keys]
+        if action == "save":
+            label, region = data.get("label"), data.get("region")
+            if not isinstance(label, str) or not 1 <= len(label.strip()) <= 64 or region not in ("", "ir", "foreign"):
+                raise Problem("نام یا موقعیت سرور معتبر نیست.")
+            if len(updated) >= 50:
+                raise Problem("حداکثر ۵۰ سرور قابل ثبت است.")
+            updated.append({"address": address, "port": port, "label": label.strip(), "region": region})
+        elif action != "remove":
+            raise Problem("عملیات دفتر سرورها معتبر نیست.")
+        if self.demo:
+            self.demo_hosts = updated
+        else:
+            atomic(STATE / "hosts.json", json.dumps(updated), 0o600)
+        return updated
+
+    def host_report(self):
+        if self.demo:
+            return {"kernel": "Linux · demo", "uptime": 104520, "disk": [16000000000, 5000000000],
+                    "interfaces": [{"name": "eth0", "state": "UP", "mtu": 1500, "addresses": ["192.0.2.10/24"]}],
+                    "routes": [{"destination": "default", "gateway": "192.0.2.1", "interface": "eth0", "metric": 100}],
+                    "listeners": [["tcp", "0.0.0.0:8765"], ["udp", "192.0.2.10:5353"]], "dns": ["192.0.2.53"]}
+        interfaces = json.loads(run("ip", "-j", "address", "show").stdout)
+        routes = json.loads(run("ip", "-j", "route", "show", "table", "main").stdout)
+        sockets = run("ss", "-H", "-lntu").stdout.splitlines()
+        disk = shutil.disk_usage("/")
+        dns = Path("/etc/resolv.conf").read_text().splitlines()
+        return {"kernel": os.uname().release, "uptime": int(float(Path("/proc/uptime").read_text().split()[0])),
+                "disk": [disk.total, disk.used],
+                "interfaces": [{"name": item["ifname"], "state": item.get("operstate", ""), "mtu": item.get("mtu"),
+                                "addresses": [f"{addr['local']}/{addr['prefixlen']}" for addr in item.get("addr_info", [])
+                                              if "local" in addr and "prefixlen" in addr]} for item in interfaces[:128]],
+                "routes": [{"destination": item.get("dst", "default"), "gateway": item.get("gateway", ""),
+                            "interface": item.get("dev", ""), "metric": item.get("metric", "")} for item in routes[:256]],
+                "listeners": [[cols[0], cols[4]] for cols in (line.split() for line in sockets[:256])
+                              if len(cols) >= 6],
+                "dns": [line.split()[1] for line in dns if line.startswith("nameserver ") and len(line.split()) >= 2]}
 
     def diagnose(self, name):
         row = next((row for row in self.inventory() if row["name"] == name), {})
@@ -591,6 +785,18 @@ class Panel(BaseHTTPRequestHandler):
                 self.answer(200, {}, "paqet_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
             elif method == "GET" and path == "/api/overview":
                 self.answer(200, manager.health())
+            elif method == "GET" and path == "/api/host-report":
+                self.answer(200, manager.host_report())
+            elif method == "GET" and path == "/api/archives":
+                self.answer(200, {"names": manager.archives()})
+            elif method == "GET" and path == "/api/hosts":
+                self.answer(200, {"hosts": manager.hosts()})
+            elif method == "POST" and path == "/api/hosts":
+                self.answer(200, {"hosts": manager.change_hosts(self.payload())})
+            elif method == "POST" and (match := re.fullmatch(rf"/api/archives/({EXISTING_NAME})/restore", path)):
+                manager.unarchive(match.group(1))
+                logging.info("Restored archived tunnel: %s", unit(match.group(1)))
+                self.answer(200, {})
             elif method == "POST" and path == "/api/region":
                 manager.set_region(self.payload().get("region"))
                 self.answer(200, {})
@@ -598,7 +804,7 @@ class Panel(BaseHTTPRequestHandler):
                 created = manager.create(self.payload())
                 logging.info("Provisioned %s", unit(created["name"]))
                 self.answer(201, created)
-            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose)", path)):
+            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network)", path)):
                 name, operation = match.groups()
                 if name not in manager.names():
                     self.answer(404, {"error": "تونل پیدا نشد."})
@@ -614,6 +820,14 @@ class Panel(BaseHTTPRequestHandler):
                 elif method == "POST" and operation == "tune":
                     manager.tune(name, self.payload())
                     logging.info("Updated KCP settings: %s", unit(name))
+                    self.answer(200, {})
+                elif method == "POST" and operation == "network":
+                    manager.refresh_network(name)
+                    logging.info("Refreshed network configuration: %s", unit(name))
+                    self.answer(200, {})
+                elif method == "POST" and operation == "archive":
+                    manager.archive(name, self.payload().get("confirmation"))
+                    logging.info("Archived tunnel: %s", unit(name))
                     self.answer(200, {})
                 elif method == "POST" and operation == "restore":
                     manager.restore(name)

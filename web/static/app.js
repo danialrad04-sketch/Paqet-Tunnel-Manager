@@ -22,7 +22,7 @@ document.querySelectorAll("[data-icon]").forEach((el) => { el.innerHTML = icon(e
 const states = {active:"فعال", inactive:"متوقف", failed:"ناموفق", activating:"در حال شروع",
   deactivating:"در حال توقف", reloading:"در حال بارگذاری", unregistered:"بدون سرویس"};
 const roles = {server:"سرور", client:"کلاینت"};
-const pages = {overview:"نمای کلی", tunnels:"تونل‌ها", host:"میزبان"};
+const pages = {overview:"نمای کلی", tunnels:"تونل‌ها", host:"میزبان", servers:"سرورها و آرشیو"};
 const digits = new Intl.NumberFormat("fa-IR");
 let tunnels = [];
 let selected;
@@ -305,9 +305,155 @@ function selectPage(page) {
   }
   $("#crumb").textContent = pages[page];
   $("#host").hidden = page !== "host";
-  $("#tunnels").hidden = page === "host";
+  $("#servers").hidden = page !== "servers";
+  $("#tunnels").hidden = !["overview", "tunnels"].includes(page);
+  if (page === "host") loadReport();
+  if (page === "servers") { loadHosts(); loadArchives(); }
   $("#hero").hidden = $("#metrics").hidden = $("#telemetry").hidden = page !== "overview";
   renderIncident();
+}
+
+function reportList(title, lines, direction = "auto") {
+  const item = document.createElement("article");
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  const list = document.createElement("ul");
+  for (const value of lines.length ? lines : ["داده‌ای ثبت نشده است."]) {
+    const row = document.createElement("li");
+    row.dir = direction;
+    row.textContent = value;
+    list.append(row);
+  }
+  item.append(heading, list);
+  return item;
+}
+async function loadReport() {
+  const button = $("#load-report");
+  if (button.disabled) return;
+  button.disabled = true;
+  showError("#report-error");
+  try {
+    const report = await api("host-report");
+    const gib = (bytes) => (bytes / 1073741824).toFixed(1) + " GiB";
+    const days = Math.floor(report.uptime / 86400);
+    const hours = Math.floor(report.uptime / 3600) % 24;
+    const body = $("#host-report");
+    body.className = "report-grid";
+    body.replaceChildren(
+      reportList("سیستم", [report.kernel, "زمان روشن بودن " + digits.format(days) + " روز و " + digits.format(hours) + " ساعت",
+        "فضای مصرف‌شدهٔ دیسک " + gib(report.disk[1]) + " از " + gib(report.disk[0])]),
+      reportList("رابط‌ها و آدرس‌ها", report.interfaces.map((link) =>
+        [link.name, link.state, "MTU " + link.mtu, ...link.addresses].join(" · ")), "ltr"),
+      reportList("جدول مسیر اصلی", report.routes.map((route) =>
+        [route.destination, route.gateway && "via " + route.gateway, route.interface, route.metric === "" ? "" : "metric " + route.metric].filter(Boolean).join(" · ")), "ltr"),
+      reportList("پورت‌های شنود", report.listeners.map(([protocol, address]) => protocol.toUpperCase() + " · " + address), "ltr"),
+      reportList("DNS", report.dns, "ltr"),
+    );
+  } catch (error) {
+    showError("#report-error", error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+$("#load-report").onclick = loadReport;
+function listEntry(list, label, detail) {
+  const row = document.createElement("li");
+  const title = document.createElement("strong");
+  title.textContent = label;
+  row.append(title);
+  if (detail) {
+    const address = document.createElement("code");
+    address.dir = "ltr";
+    address.textContent = detail;
+    row.append(address);
+  }
+  list.append(row);
+  return row;
+}
+function listButton(row, title, action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "secondary";
+  button.textContent = title;
+  button.onclick = async () => {
+    button.disabled = true;
+    try { await action(); } finally { button.disabled = false; }
+  };
+  row.append(button);
+}
+const hostsForm = $("#hosts-form");
+let editingHost;
+hostsForm.onreset = () => {
+  editingHost = undefined;
+  $("#cancel-host-edit").hidden = true;
+};
+function renderHosts(hosts) {
+  const list = $("#hosts-list");
+  list.replaceChildren();
+  if (!hosts.length) listEntry(list, "هنوز سروری اضافه نشده است.");
+  for (const host of hosts) {
+    const address = host.address + ":" + host.port;
+    const region = regions[host.region];
+    const row = listEntry(list, host.label + (region ? " · " + region : ""), address);
+    const link = document.createElement("a");
+    link.href = "http://" + address;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "باز کردن پنل";
+    row.append(link);
+    listButton(row, "ویرایش", async () => {
+      editingHost = {address:host.address, port:host.port};
+      $("#cancel-host-edit").hidden = false;
+      for (const field of ["label", "address", "port", "region"]) hostsForm.elements[field].value = host[field];
+      hostsForm.elements.label.focus();
+    });
+    listButton(row, "حذف از دفتر", async () => {
+      showError("#hosts-error");
+      try {
+        const result = await api("hosts", {...host, action:"remove"});
+        renderHosts(result.hosts);
+      } catch (error) { showError("#hosts-error", error.message); }
+    });
+  }
+}
+async function loadHosts() {
+  showError("#hosts-error");
+  try { renderHosts((await api("hosts")).hosts); }
+  catch (error) { showError("#hosts-error", error.message); }
+}
+hostsForm.onsubmit = async (event) => {
+  event.preventDefault();
+  const button = hostsForm.querySelector("[type=submit]");
+  button.disabled = true;
+  showError("#hosts-error");
+  try {
+    const result = await api("hosts", {...Object.fromEntries(new FormData(hostsForm)), action:"save", previous:editingHost});
+    renderHosts(result.hosts);
+    hostsForm.reset();
+    toast("سرور ذخیره شد.");
+  } catch (error) { showError("#hosts-error", error.message); }
+  finally { button.disabled = false; }
+};
+async function loadArchives() {
+  const list = $("#archives-list");
+  showError("#archives-error");
+  try {
+    const {names} = await api("archives");
+    list.replaceChildren();
+    if (!names.length) listEntry(list, "آرشیو خالی است.");
+    for (const name of names) {
+      const row = listEntry(list, name);
+      listButton(row, "بازیابی تونل", async () => {
+        if (!window.confirm("تونل " + name + " با وضعیت پیشین سرویس بازیابی شود؟")) return;
+        try {
+          await api("archives/" + name + "/restore", {});
+          await loadArchives();
+          await refresh();
+          toast("تونل از آرشیو بازیابی شد.");
+        } catch (error) { showError("#archives-error", error.message); }
+      });
+    }
+  } catch (error) { showError("#archives-error", error.message); }
 }
 
 const create = $("#create-form");
@@ -424,6 +570,8 @@ function renderDetails() {
   const registered = tunnel.state !== "unregistered";
   $(".service-actions").hidden = $("#log-head").hidden = $("#logs").hidden = !registered;
   $("#restore").hidden = !tunnel.backup;
+  $("#refresh-network").hidden = !tunnel.tunable;
+  $("#archive-control").hidden = !tunnel.archivable;
   $("#diagnostic").hidden = !registered || tunnel.role !== "client" || !tunnel.endpoint;
   const facts = $("#detail-facts");
   facts.replaceChildren();
@@ -495,6 +643,8 @@ tuning.addEventListener("toggle", () => {
 function openDetails(name) {
   selected = name;
   $("#route-result").textContent = "";
+  $("#archive-control").open = false;
+  $("#archive-form").reset();
   tuning.open = false;
   tuning.hidden = !tunnels.find((tunnel) => tunnel.name === name)?.tunable;
   renderDetails();
@@ -521,6 +671,34 @@ document.querySelectorAll(".service-actions button").forEach((button) => {
   };
 });
 $("#reload-logs").onclick = loadLogs;
+$("#archive-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector("[type=submit]");
+  const name = selected;
+  button.disabled = true;
+  showError("#detail-error");
+  try {
+    await api("tunnels/" + name + "/archive", {confirmation:form.elements.confirmation.value});
+    if (selected === name) $("#details").close();
+    await refresh();
+    toast("تونل به آرشیو منتقل شد.");
+  } catch (error) { if (selected === name) showError("#detail-error", error.message); }
+  finally { button.disabled = false; }
+};
+$("#refresh-network").onclick = async () => {
+  const name = selected;
+  if (!window.confirm("رابط، IPv4 و MAC مسیر جدید اعمال شوند؟ تونل فعال دوباره راه‌اندازی می‌شود.")) return;
+  const button = $("#refresh-network");
+  button.disabled = true;
+  showError("#detail-error");
+  try {
+    await api("tunnels/" + name + "/network", {});
+    await refresh();
+    toast("تنظیمات شبکه به‌روزرسانی شد.");
+  } catch (error) { if (selected === name) showError("#detail-error", error.message); }
+  finally { button.disabled = false; }
+};
 $("#check-route").onclick = async () => {
   const name = selected;
   const button = $("#check-route");
@@ -538,7 +716,7 @@ $("#check-route").onclick = async () => {
   }
 };
 $("#restore").onclick = async () => {
-  if (!window.confirm("تنظیمات پیش از آخرین ویرایش KCP بازیابی شود؟ سرویس فعال دوباره راه‌اندازی می‌شود.")) return;
+  if (!window.confirm("تنظیمات پیش از آخرین ویرایش بازیابی شود؟ سرویس فعال دوباره راه‌اندازی می‌شود.")) return;
   const button = $("#restore");
   button.disabled = true;
   showError("#detail-error");
