@@ -348,6 +348,24 @@ WantedBy=multi-user.target
                 "core": self.demo or os.access(CORE, os.X_OK), "demo": self.demo}
 
 
+def accepted_host(host, public_http):
+    if not host:
+        return False
+    match = re.fullmatch(r"([a-z0-9.]+):([0-9]{1,5})", host)
+    if not match or not 1 <= int(match.group(2)) <= 65535:
+        return False
+    address = match.group(1)
+    if address in ("127.0.0.1", "localhost"):
+        return True
+    if public_http:
+        try:
+            ipaddress.IPv4Address(address)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
 class Panel(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -393,7 +411,7 @@ class Panel(BaseHTTPRequestHandler):
 
     def handle_request(self, method):
         host = self.headers.get("Host")
-        if not host or not re.fullmatch(r"(?:127\.0\.0\.1|localhost):[0-9]{1,5}", host):
+        if not accepted_host(host, self.server.public_http):
             self.answer(403, {"error": "میزبان درخواست مجاز نیست."})
             return
         if method == "POST" and self.headers.get("Origin") != f"http://{host}":
@@ -483,18 +501,24 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--bind", type=ipaddress.IPv4Address,
+                        default=os.environ.get("PAQET_HTTP_BIND", "127.0.0.1"))
     parser.add_argument("--token-file", type=Path, default=Path("/etc/paqet-panel/token"))
     options = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     token = secrets.token_urlsafe(32) if options.demo else options.token_file.read_text().strip()
     if not options.demo and len(token) < 32:
         parser.error("The admin token must have at least 32 characters.")
-    with LocalServer(("127.0.0.1", options.port), Panel) as server:
+    if options.demo and not options.bind.is_loopback:
+        parser.error("Demo mode is limited to loopback.")
+    bind = str(options.bind)
+    with LocalServer((bind, options.port), Panel) as server:
+        server.public_http = not options.bind.is_loopback
         port = server.server_port
         server.manager = Manager(options.demo, port)
         server.token_hash = hashlib.sha256(token.encode()).digest()
         server.sessions, server.attempts = {}, []
-        print(f"http://127.0.0.1:{port}", flush=True)
+        print(f"Listening on {bind}:{port}", flush=True)
         server.serve_forever()
 
 

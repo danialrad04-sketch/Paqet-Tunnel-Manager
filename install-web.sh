@@ -5,6 +5,8 @@ usage() {
     cat <<'EOF'
 Usage:
   sudo bash install-web.sh   # downloads the bundled core version if missing
+  sudo bash install-web.sh --public-http
+  sudo bash install-web.sh --local-http
   sudo bash install-web.sh --core /path/to/paqet --sha256 SHA256
   sudo bash install-web.sh --core-url https://example.org/paqet.tar.gz --sha256 SHA256
 EOF
@@ -13,8 +15,11 @@ EOF
 core=
 url=
 checksum=
+listen=
 while (($#)); do
     case $1 in
+        --public-http) listen=0.0.0.0; shift ;;
+        --local-http) listen=127.0.0.1; shift ;;
         --core|--core-url|--sha256)
             [[ $# -ge 2 ]] || { usage >&2; exit 2; }
             case $1 in
@@ -109,6 +114,10 @@ if [[ ! -e /etc/paqet-panel/token ]]; then
     (umask 077; /usr/bin/python3 -c 'import secrets; print(secrets.token_urlsafe(40))' > /etc/paqet-panel/token)
 fi
 
+if [[ -n $listen ]]; then
+    (umask 077; printf 'PAQET_HTTP_BIND=%s\n' "$listen" > /etc/paqet-panel/http.env)
+fi
+
 cat > /etc/systemd/system/paqetpanel.service <<'UNIT'
 [Unit]
 Description=Paqet local web administration
@@ -116,6 +125,7 @@ After=network.target
 
 [Service]
 Type=exec
+EnvironmentFile=-/etc/paqet-panel/http.env
 ExecStart=/usr/bin/python3 /opt/paqet-panel/panel.py
 Restart=on-failure
 RestartSec=3
@@ -132,8 +142,11 @@ systemctl daemon-reload
 systemctl enable paqetpanel.service
 systemctl restart paqetpanel.service
 systemctl is-active --quiet paqetpanel.service
-cat <<'EOF'
-Paqet Panel installed at http://127.0.0.1:8765
-From your computer: ssh -N -L 8765:127.0.0.1:8765 USER@SERVER
-On the server, read the login token with: sudo cat /etc/paqet-panel/token
-EOF
+if [[ -f /etc/paqet-panel/http.env ]] &&
+        grep -Fxq 'PAQET_HTTP_BIND=0.0.0.0' /etc/paqet-panel/http.env; then
+    echo 'Paqet Panel installed at http://SERVER_IPV4:8765'
+else
+    echo 'Paqet Panel installed at http://127.0.0.1:8765'
+    echo 'From your computer: ssh -N -L 8765:127.0.0.1:8765 USER@SERVER'
+fi
+echo 'On the server, read the login token with: sudo cat /etc/paqet-panel/token'
