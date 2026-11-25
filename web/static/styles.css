@@ -566,3 +566,5 @@ pre.terminal{background:var(--terminal);color:#d4d4d8;border-color:#1f1f24;min-h
 .forward-row{grid-template-columns:repeat(2,minmax(0,1fr));padding:12px;border:1px solid var(--border);border-radius:8px}
 .forward-row input,.forward-row select{min-width:0;width:100%}
 .error{white-space:pre-wrap;overflow-wrap:anywhere}
+.guide-steps{list-style:decimal inside;padding-inline:22px}.guide-steps li{margin-block:8px}.guide-steps p,.probe-box p{color:var(--muted);margin-block:5px;font-size:13px}
+.probe-box{padding:14px;display:grid;gap:8px}.probe-box label{display:flex;align-items:center;gap:8px}.probe-box .field{display:grid}

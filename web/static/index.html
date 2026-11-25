@@ -76,6 +76,7 @@
           <p id="hero-topology">در حال خواندن نقش‌های Paqet از تنظیمات میزبان…</p>
           <div class="hero-actions">
             <button class="btn primary" data-create><span data-icon="plus"></span>تونل جدید</button>
+            <button class="btn outline" id="setup-help">راهنمای اتصال</button>
             <button class="btn outline" data-page-link="host"><span data-icon="server"></span>وضعیت میزبان</button>
           </div>
         </div>
@@ -220,6 +221,16 @@
 </div>
 
 <!-- ───────────── Create dialog ───────────── -->
+<dialog id="guide-dialog" aria-labelledby="guide-title">
+  <div class="modal-head"><h2 id="guide-title">راه‌اندازی ایران و خارج</h2><button class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
+  <ol class="modal-body guide-steps">
+    <li><b>نصب روی هر دو میزبان</b><p>نصب‌کنندهٔ main را با گزینهٔ public-http اجرا کنید و آدرس چاپ‌شده در پایان نصب را باز کنید. از «میزبان» موقعیت هر سرور را ثبت کنید.</p></li>
+    <li><b>ساخت پذیرنده روی سرور خارج</b><p>«تونل جدید» و نقش سرور را انتخاب کنید. پورت ارتباط Paqet را وارد کنید. پس از ساخت، در جزئیات سرویس فایل اتصال کلاینت را دریافت کنید. این فایل حاوی کلید است.</p></li>
+    <li><b>جفت‌سازی روی ایران</b><p>نقش کلاینت را انتخاب کنید، فایل اتصال را وارد کنید و IPv4 عمومی میزبان خارج را بنویسید.</p></li>
+    <li><b>تعریف ورودی کاربران</b><p>مثلاً برای انتقال پورت ۱۴۱۰۵ ایران به همان پورت روی میزبان خارج، ورودی را <bdi>0.0.0.0:14105</bdi> و مقصد را <bdi>127.0.0.1:14105</bdi> بگذارید. پروتکل را مطابق برنامهٔ مقصد انتخاب کنید.</p></li>
+    <li><b>بررسی مسیر و عبور داده</b><p>در جزئیات کلاینت وضعیت سرویس و مسیر IPv4 را بررسی کنید. اگر مقصد TLS دارد، آزمون پاسخ TLS را اجرا کنید. برای سایر پروتکل‌ها یک درخواست با برنامهٔ واقعی از ورودی ایران بفرستید. هنگام خطای Message too large، مقدار MTU هر دو سمت را بررسی کنید.</p></li>
+  </ol>
+</dialog>
 <dialog id="create-dialog" aria-labelledby="create-title">
   <form id="create-form">
     <div class="modal-head"><div><h2 id="create-title">ساخت تونل</h2><p class="muted">پیکربندی و فعال‌سازی سرویس روی همین میزبان</p></div><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
@@ -301,6 +312,13 @@
           <label class="field">MTU<input name="mtu" dir="ltr" type="number" min="50" max="1500" required></label>
           <label class="field">تعداد اتصال<input name="conn" dir="ltr" type="number" min="1" max="256" required></label>
         </div>
+        <details class="advanced"><summary>بافر شبکه و سطح گزارش</summary><div class="form-grid">
+          <label class="field">بافر PCAP (بایت)<input name="sockbuf" type="number" min="0" max="104857600" placeholder="پیش‌فرض هسته"></label>
+          <p class="muted hint wide">در هستهٔ رسمی alpha.21 اندازهٔ بافر دریافت را با PCAP تنظیم کنید. فیلدهای tcpbuf و udpbuf برای نسخه‌های سازگاری هستند که این گزینه‌ها را می‌خوانند.</p>
+          <label class="field">بافر TCP (بایت)<input name="tcpbuf" type="number" min="0" max="2147483647" placeholder="پیش‌فرض هسته"></label>
+          <label class="field">بافر UDP (بایت)<input name="udpbuf" type="number" min="0" max="2147483647" placeholder="پیش‌فرض هسته"></label>
+          <label class="field">سطح گزارش<select name="level"><option value="">پیش‌فرض هسته</option><option>none</option><option>debug</option><option>info</option><option>warn</option><option>error</option><option>fatal</option></select></label>
+        </div></details>
         <details class="advanced"><summary>پارامترهای دستی KCP، بافر و FEC<span class="summary-chevron" data-icon="chevron-down"></span></summary><div class="form-grid" id="advanced-kcp"></div></details>
         <p class="muted hint">اعمال تنظیمات، سرویس فعال را راه‌اندازی مجدد می‌کند.</p>
         <button class="btn primary sm" type="submit">ذخیرهٔ تنظیمات</button>
@@ -314,6 +332,12 @@
       <button class="btn outline sm" id="restore" hidden><span data-icon="undo"></span>بازگردانی تنظیمات قبلی</button>
     </div>
     <p id="route-result" class="route-result" aria-live="polite"></p>
+    <section id="probe-section" hidden class="advanced probe-box">
+      <label class="field">آزمون پاسخ TLS از ورودی TCP کلاینت<select id="probe-listen" dir="ltr"></select></label>
+      <p class="muted">برای مقصدی که TLS دارد. نتیجه، پاسخ سرویس را می‌سنجد و هویت گواهی را بررسی نمی‌کند.</p>
+      <div class="tool-row"><button class="btn outline sm" id="probe-now">آزمون اکنون</button><label><input type="checkbox" id="probe-live"> تکرار هر ۳۰ ثانیه تا بستن جزئیات</label></div>
+      <p id="probe-result" role="status"></p>
+    </section>
     <div id="log-head" class="forward-head"><h3>گزارش سرویس</h3><button id="reload-logs" class="btn ghost sm"><span data-icon="refresh"></span>تازه‌سازی</button></div>
     <pre id="logs" class="terminal" dir="ltr"></pre>
     <p id="detail-error" class="error banner" role="alert" hidden></p>

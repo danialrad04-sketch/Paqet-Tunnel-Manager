@@ -35,6 +35,8 @@ https://t.me/BehzadEa12
 
 ## Web panel
 
+The GitHub bootstrap defaults to direct IPv4 HTTP when invoked without arguments. Use `--local-http` for SSH-only access. The installer checks the session API before printing the panel address. Open the setup guide on the dashboard to pair the hosts and test a TLS application through a configured TCP forward.
+
 Install the Persian dashboard on a fresh Debian/Ubuntu system:
 
 ```bash

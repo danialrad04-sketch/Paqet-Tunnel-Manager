@@ -751,6 +751,15 @@ function renderDetails() {
   $("#restore").hidden = !tunnel.backup;
   $("#refresh-network").hidden = !tunnel.tunable;
   $("#archive-control").hidden = !tunnel.archivable;
+  const listeners = tunnel.forwards.filter(rule => rule.protocol === "tcp").map(rule => rule.listen);
+  const choices = $("#probe-listen");
+  if (JSON.stringify(listeners) !== choices.dataset.listeners) {
+    choices.replaceChildren(...listeners.map(value => new Option(value, value)));
+    choices.dataset.listeners = JSON.stringify(listeners);
+    clearProbe();
+  }
+  $("#probe-section").hidden = tunnel.role !== "client" || tunnel.state !== "active" || !listeners.length;
+  if ($("#probe-section").hidden) clearProbe();
   $("#diagnostic").hidden = !registered || tunnel.role !== "client" || !tunnel.endpoint;
   const facts = $("#detail-facts");
   facts.replaceChildren();
@@ -832,6 +841,8 @@ tuning.addEventListener("toggle", () => {
   if (!tunnel) return;
   tune.reset();
   tune.elements.mtu.value = tunnel.mtu || "1350";
+  for (const field of ["tcpbuf","udpbuf","sockbuf"]) tune.elements[field].value = tunnel.buffers?.[field] ?? "";
+  tune.elements.level.value = tunnel.level || "";
   tune.elements.conn.value = tunnel.conn || "1";
   for (const key of kcpFields) tune.elements[key].value = tunnel.advanced?.[key] ?? "";
 });
@@ -1115,3 +1126,32 @@ $("#forward-form").onsubmit = async (event) => {
   } catch (error) { showError("#forward-error", error.message); }
   finally { button.disabled = false; }
 };
+
+$("#setup-help").onclick = () => $("#guide-dialog").showModal();
+let probeGeneration = 0;
+function clearProbe() {
+  probeGeneration++;
+  $("#probe-live").checked = false;
+  $("#probe-result").textContent = "";
+}
+async function probe() {
+  const button = $("#probe-now");
+  if (button.disabled || !$("#details").open || $("#probe-section").hidden) return;
+  const generation = probeGeneration;
+  button.disabled = true;
+  try {
+    const result = await api("tunnels/" + selected + "/probe", {listen:$("#probe-listen").value});
+    if (generation !== probeGeneration) return;
+    const labels = {demo:"نمونهٔ نمایشی؛ آزمون شبکه اجرا نشد.", tcp:"ورودی TCP اتصال را پذیرفت. پاسخ TLS دریافت نشد.",
+      unreachable:"اتصال به ورودی TCP برقرار نشد.", tls:"پاسخ TLS از مسیر فوروارد دریافت شد."};
+    const timing = result.status === "tls" ? " · " + result.version + " · " + digits.format(result.ms) + " ms" : "";
+    $("#probe-result").textContent = new Date().toLocaleTimeString("fa-IR") + " · " + labels[result.status] + timing;
+  } catch (error) {
+    if (generation === probeGeneration) $("#probe-result").textContent = error.message;
+  } finally { button.disabled = false; }
+}
+$("#details").addEventListener("close", clearProbe);
+$("#probe-now").onclick = probe;
+$("#probe-listen").onchange = clearProbe;
+$("#probe-live").onchange = () => { if ($("#probe-live").checked) probe(); };
+setInterval(() => { if (!document.hidden && $("#probe-live").checked) probe(); }, 30000);

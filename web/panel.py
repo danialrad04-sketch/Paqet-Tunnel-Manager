@@ -12,6 +12,7 @@ import re
 import secrets
 import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
 import time
@@ -261,6 +262,9 @@ def summary(name, config, state, enabled, properties=None, source="default"):
     return {"name": name, "role": role, "evidence": evidence, "state": state, "enabled": enabled,
             "endpoint": str(endpoint.get("addr", "")), "source": source, "forwards": forwards,
             "interface": str(network.get("interface", "")), "local": str(mapping(network.get("ipv4")).get("addr", "")),
+            "buffers": {"sockbuf": mapping(network.get("pcap")).get("sockbuf"),
+                        "tcpbuf": transport.get("tcpbuf"), "udpbuf": transport.get("udpbuf")},
+            "level": str(mapping(config.get("log")).get("level", "")),
             "advanced": {field: kcp[field] for field in (*KCP_NUMERIC, *KCP_BOOLEAN) if field in kcp},
             "mode": str(kcp.get("mode", "")), "mtu": str(kcp.get("mtu", "")), "conn": str(transport.get("conn", "")),
             "restarts": values.get("NRestarts", ""), "pid": values.get("MainPID", ""),
@@ -285,6 +289,7 @@ class Manager:
                           "transport": {"protocol": "kcp", "conn": 1, "kcp": {"key": "example-demo-key", "block": "aes", "mode": "fast", "mtu": 1350}}}
                 if role == "client":
                     config["socks5"] = [{"listen": "127.0.0.1:1080"}]
+                    config["forward"] = [{"listen":"0.0.0.0:8443", "target":"127.0.0.1:443", "protocol":"tcp"}]
                 self.samples[name] = (config, state, state != "inactive")
 
     def names(self):
@@ -627,11 +632,37 @@ WantedBy=multi-user.target
                 if data[field] not in ("true", "false"):
                     raise Problem(f"مقدار {field} معتبر نیست.")
                 changes[field] = data[field] == "true"
+        buffers = {}
+        for field in ("sockbuf", "tcpbuf", "udpbuf"):
+            if field in data:
+                value = str(data[field])
+                if value and (not re.fullmatch(r"[0-9]{1,10}", value) or int(value) > 2147483647):
+                    raise Problem(f"اندازهٔ {field} معتبر نیست.")
+                if field == "sockbuf" and value and int(value) != 0 and not 1024 <= int(value) <= 104857600:
+                    raise Problem("بافر PCAP باید صفر یا بین ۱۰۲۴ بایت و ۱۰۰ مگابایت باشد.")
+                buffers[field] = int(value) if value else None
+        level = data.get("level")
+        if level is not None and level not in ("", "none", "debug", "info", "warn", "error", "fatal"):
+            raise Problem("سطح گزارش معتبر نیست.")
         if self.demo:
             self.demo_backups[name] = deepcopy(config)
         for field in (*KCP_NUMERIC, *KCP_BOOLEAN):
             if data.get(field) == "":
                 kcp.pop(field, None)
+        for field, value in buffers.items():
+            settings = transport
+            if field == "sockbuf":
+                if value is None and not mapping(mapping(config.get("network")).get("pcap")):
+                    continue
+                settings = config.setdefault("network", {}).setdefault("pcap", {})
+            if value is None:
+                settings.pop(field, None)
+            else:
+                settings[field] = value
+        if level:
+            config.setdefault("log", {})["level"] = level
+        elif level == "":
+            mapping(config.get("log")).pop("level", None)
         kcp.update(changes)
         if mode:
             kcp["mode"] = mode
@@ -860,6 +891,36 @@ WantedBy=multi-user.target
                             if row["interface"] and configured else None)
         return {"target": target, **route}
 
+    def probe_forward(self, name, listen):
+        row = next((row for row in self.inventory() if row["name"] == name), {})
+        if row.get("role") != "client" or row.get("state") != "active" or not any(
+                rule["listen"] == listen and rule["protocol"] == "tcp" for rule in row.get("forwards", [])):
+            raise Problem("یک ورودی TCP ثبت‌شده روی کلاینت فعال انتخاب کنید.")
+        host, port = endpoint(listen, True)
+        host = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
+        if self.demo:
+            return {"status": "demo"}
+        if not ipaddress.ip_address(host).is_loopback:
+            interfaces = json.loads(run("ip", "-j", "address", "show").stdout)
+            if not any(addr.get("local") == host for item in interfaces for addr in item.get("addr_info", [])):
+                raise Problem("آدرس شنود روی رابط‌های این میزبان وجود ندارد.")
+        # Only contact a configured local listener. A completed TLS handshake proves
+        # an application replied through the forward; certificate identity is outside this test.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        started = time.monotonic()
+        try:
+            with socket.create_connection((host, port), timeout=2) as connection:
+                try:
+                    with context.wrap_socket(connection) as stream:
+                        return {"status": "tls", "version": stream.version(),
+                                "ms": round((time.monotonic() - started) * 1000)}
+                except OSError:
+                    return {"status": "tcp"}
+        except OSError:
+            return {"status": "unreachable"}
+
     def logs(self, name):
         if self.demo:
             return f"[DEMO] paqet-{name}.service\n[DEMO] Journal output is simulated.\n"
@@ -986,7 +1047,7 @@ class Panel(BaseHTTPRequestHandler):
                 created = manager.create(self.payload())
                 logging.info("Provisioned %s", unit(created["name"]))
                 self.answer(201, created)
-            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network|config|pair|forwards)", path)):
+            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network|config|pair|forwards|probe)", path)):
                 name, operation = match.groups()
                 if operation not in ("config", "forwards", "pair", "restore") and name not in manager.names():
                     self.answer(404, {"error": "تونل پیدا نشد."})
@@ -1015,6 +1076,8 @@ class Panel(BaseHTTPRequestHandler):
                                       "transport": config.get("transport")})
                 elif method == "GET" and operation == "logs":
                     self.answer(200, {"logs": manager.logs(name)})
+                elif method == "POST" and operation == "probe":
+                    self.answer(200, manager.probe_forward(name, self.payload().get("listen")))
                 elif method == "GET" and operation == "diagnose":
                     self.answer(200, manager.diagnose(name))
                 elif method == "POST" and operation == "action":

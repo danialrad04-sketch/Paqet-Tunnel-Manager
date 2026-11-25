@@ -143,9 +143,24 @@ systemctl daemon-reload
 systemctl enable paqetpanel.service
 systemctl restart paqetpanel.service
 systemctl is-active --quiet paqetpanel.service
+ready=
+for attempt in {1..10}; do
+    if curl --noproxy '*' -fsS --max-time 2 http://127.0.0.1:8765/api/session 2>/dev/null |
+        /usr/bin/python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(s.get("demo") is not False or s.get("authenticated") is not False)' 2>/dev/null; then
+        ready=yes
+        break
+    fi
+    sleep 1
+done
+if [[ -z $ready ]]; then
+    echo 'Panel HTTP check failed. See journalctl -u paqetpanel.service -n 30.' >&2
+    exit 1
+fi
 if [[ -f /etc/paqet-panel/http.env ]] &&
         grep -Fxq 'PAQET_HTTP_BIND=0.0.0.0' /etc/paqet-panel/http.env; then
-    echo 'Paqet Panel installed at http://SERVER_IPV4:8765'
+    panel_address=$(ip -4 -o address show scope global | awk 'NR == 1 {split($4,a,"/"); print a[1]}')
+    echo "Paqet Panel installed at http://${panel_address:-SERVER_IPV4}:8765"
+    echo 'If the host uses NAT, open this port on its public address.'
 else
     echo 'Paqet Panel installed at http://127.0.0.1:8765'
     echo 'From your computer: ssh -N -L 8765:127.0.0.1:8765 USER@SERVER'
