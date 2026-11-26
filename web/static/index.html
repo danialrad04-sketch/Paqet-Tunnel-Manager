@@ -198,10 +198,10 @@
       </section>
 
       <section id="relays" class="page" hidden>
-        <div class="page-head"><div><h1>مسیرها و پایش</h1><p class="muted">مقایسهٔ Paqet و HTTPS، پایش مقصد و مدیریت اتصال‌های جدید</p></div><button id="add-relay" class="btn primary"><span data-icon="plus"></span>مسیر جدید</button></div>
+        <div class="page-head"><div><h1>مسیرها و پایش</h1><p class="muted">مقایسهٔ Paqet، HTTPS و QUIC، پایش مقصد و مدیریت اتصال‌های جدید</p></div><button id="add-relay" class="btn primary"><span data-icon="plus"></span>مسیر جدید</button></div>
         <details class="card route-help"><summary>راهنمای اتصال ایران و خارج</summary>
           <ol class="guide-steps">
-            <li>در پنل خارج یک گیرندهٔ HTTPS بسازید. دامنه باید به این سرور اشاره کند و گواهی Let’s Encrypt آن روی سرور موجود باشد. مقصد، پورت سرویس روی loopback خارج است.</li>
+            <li>در پنل خارج گیرندهٔ HTTPS روی TCP یا گیرندهٔ QUIC روی UDP بسازید. دامنه و گواهی Let’s Encrypt باید برای همان سرور باشند. مقصد را روی loopback خارج تنظیم کنید.</li>
             <li>فایل اتصال را از گیرنده بگیرید. در ایران یک ورودی TCP روی پورتی آزاد ثبت کنید و فایل را وارد کنید. برای مقایسه، شنوندهٔ Paqet همان سرویس را نیز با آدرس loopback ایران وارد کنید.</li>
             <li>پایش و مقایسه را اجرا کنید. برای سرویس وب، به آدرسی اشاره کنید که هم HEAD و هم GET پاسخ می‌دهد. برای اندازه‌گیری زیر بار، فایل آزمون چندمگابایتی انتخاب کنید.</li>
             <li>برای انتقال پورت فعال، ابتدا شنوندهٔ Paqet را به یک پورت loopback منتقل کنید. سپس پورت عمومی را به ورودی این بخش اختصاص دهید. تغییر مسیر از این پس فقط اتصال‌های جدید را جابه‌جا می‌کند.</li>
@@ -209,6 +209,7 @@
           <p class="muted">این بخش جریان TCP سرویس‌هایی مثل Xray را عبور می‌دهد. فایل اتصال حاوی کلید است. برای انتقال فایل و تنظیمات از نشست پنل روی SSH یا شبکهٔ مدیریتی استفاده کنید.</p>
         </details>
         <p id="relay-error" class="error banner" role="alert" hidden></p>
+        <p id="quic-install-hint" class="muted" hidden>برای فعال کردن مسیر QUIC، نصب‌کننده را روی هر دو میزبان با گزینهٔ <bdi>--with-quic</bdi> اجرا کنید.</p>
         <div id="relay-list" class="relay-list"></div>
       </section>
 
@@ -396,9 +397,10 @@
     <div class="modal-head"><h2 id="relay-title">تنظیم مسیر TCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
     <div class="modal-body form-grid">
       <label class="field">نام مسیر<input name="name" dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" required></label>
-      <label class="field">نقش<select name="role"><option value="entry">ورودی سمت ایران</option><option value="receiver">گیرندهٔ HTTPS سمت خارج</option></select></label>
+      <label class="field">نقش<select name="role"><option value="entry">ورودی سمت ایران</option><option value="receiver">گیرنده سمت خارج</option></select></label>
       <label class="field wide">آدرس شنود IPv4 و پورت<input name="listen" dir="ltr" placeholder="127.0.0.1:24105" required></label>
       <div id="receiver-fields" class="form-grid wide" hidden>
+        <label class="field wide">پروتکل گیرنده<select name="transport"><option value="https">HTTPS روی TCP</option><option value="quic">QUIC روی UDP</option></select></label>
         <label class="field">دامنه و نام گواهی<input name="domain" placeholder="relay.example.org" dir="ltr"></label>
         <label class="field">مقصد روی خارج<input name="target" placeholder="127.0.0.1:14105" dir="ltr"></label>
         <p class="muted hint wide">گواهی و کلید از مسیر استاندارد Let’s Encrypt خوانده می‌شوند.</p>
@@ -407,7 +409,8 @@
         <label class="field">شنوندهٔ Paqet روی ایران<input name="primary" placeholder="127.0.0.1:14105" dir="ltr"></label>
         <label class="field">شنوندهٔ Paqet آماده‌به‌کار<input name="backup" placeholder="127.0.0.1:34105" dir="ltr"></label>
         <label class="field wide">فایل اتصال HTTPS<input id="relay-profile" type="file" accept=".json,application/json"><small class="muted" id="relay-profile-status">اختیاری</small></label>
-        <label class="field">مسیر اولیه<select name="selected"><option value="paqet">Paqet</option><option value="https">HTTPS</option><option value="standby">Paqet آماده‌به‌کار</option></select></label>
+        <label class="field wide">فایل اتصال QUIC<input id="quic-profile" type="file" accept=".json,application/json"><small class="muted" id="quic-profile-status">اختیاری</small></label>
+        <label class="field">مسیر اولیه<select name="selected"><option value="paqet">Paqet</option><option value="https">HTTPS</option><option value="quic">QUIC</option><option value="standby">Paqet آماده‌به‌کار</option></select></label>
         <label class="field">آزمون مقصد<select name="probe"><option value="tls">پاسخ TLS</option><option value="https">HTTPS با اعتبارسنجی گواهی</option><option value="http">HTTP</option><option value="tcp">فقط اتصال TCP</option></select></label>
         <label class="field">دامنهٔ سرویس در آزمون HTTP(S)<input name="probe_host" placeholder="service.example.org" dir="ltr"></label>
         <label class="field">مسیر آزمون HTTP(S)<input name="probe_path" value="/" dir="ltr"></label>

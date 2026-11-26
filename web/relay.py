@@ -1,4 +1,4 @@
-"""Managed TCP forwards with a fixed-destination HTTPS CONNECT transport."""
+"""Managed TCP forwards with fixed-destination HTTPS and QUIC transports."""
 import asyncio
 from collections import defaultdict
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -15,6 +15,11 @@ import threading
 import time
 
 import panel as p
+
+try:
+    import quic_transport
+except ImportError:
+    quic_transport = None
 
 
 def month():
@@ -38,8 +43,20 @@ def hostname(value):
 
 def secret(value):
     if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{43}", value):
-        raise p.Problem("کلید اتصال HTTPS معتبر نیست.")
+        raise p.Problem("کلید اتصال معتبر نیست.")
     return value
+
+
+def peer_profile(value, protocol):
+    fmt = f"paqet-{protocol}-v1"
+    if not isinstance(value, dict) or value.get("format") != fmt:
+        raise p.Problem(f"فایل اتصال {protocol.upper()} معتبر نیست.")
+    return {"format": fmt, "domain": hostname(value.get("domain")),
+            "port": p.number(value.get("port"), 1, 65535, "پورت گیرنده"), "key": secret(value.get("key"))}
+
+
+def listener_transport(config):
+    return config.get("transport", "https") if config.get("role") == "receiver" else "tcp"
 
 
 async def read_header(reader):
@@ -140,6 +157,8 @@ class Relay:
         self.servers = {}
         self.runtime = {}
         self.contexts = {}
+        self.quic_contexts = {}
+        self.quic = quic_transport.Pool(ssl.get_default_verify_paths().cafile) if quic_transport else None
         self.history = defaultdict(list)
         self.connections = defaultdict(int)
         self.monitored = set()
@@ -193,8 +212,15 @@ class Relay:
                 raise p.Problem("آدرس شنود IPv4 صریح و پورت آزاد ۱۰۲۴ به بالا لازم است.")
         config = {"name": name, "role": role, "listen": f"{bind}:{port}"}
         if role == "receiver":
+            transport = data.get("transport") or listener_transport(old or config)
+            if transport not in ("https", "quic"):
+                raise p.Problem("پروتکل گیرنده معتبر نیست.")
+            if old and transport != listener_transport(old):
+                raise p.Problem("برای تغییر پروتکل، گیرندهٔ جدید بسازید.")
+            self.require_quic(transport == "quic")
+            config["transport"] = transport
             target = list(local_peer(data.get("target")))
-            if target[1] == port and bind in ("0.0.0.0", target[0]):
+            if transport == "https" and target[1] == port and bind in ("0.0.0.0", target[0]):
                 raise p.Problem("شنونده و مقصد گیرنده روی یک سوکت قرار دارند.")
             if target[1] == self.panel_port:
                 raise p.Problem("پورت پنل برای مقصد مسیر مجاز نیست.")
@@ -202,26 +228,19 @@ class Relay:
                           key=old.get("key") or secrets.token_urlsafe(32))
         elif role == "entry":
             primary = data.get("primary") or ""
-            alternate = data.get("peer")
-            if not primary and not alternate:
-                raise p.Problem("حداقل یک مسیر لازم است.")
+            alternate, quic = (peer_profile(data[key], protocol) if data.get(key) is not None else
+                               old.get(key) if data.get(f"keep_{key}") is True else None
+                               for key, protocol in (("peer", "https"), ("quic_peer", "quic")))
+            self.require_quic(bool(quic))
             if primary:
                 primary = list(local_peer(primary))
-            if alternate:
-                if not isinstance(alternate, dict) or alternate.get("format") != "paqet-https-v1":
-                    raise p.Problem("فایل اتصال HTTPS معتبر نیست.")
-                alternate = {"format": "paqet-https-v1", "domain": hostname(alternate.get("domain")),
-                             "port": p.number(alternate.get("port"), 1, 65535, "پورت HTTPS"),
-                             "key": secret(alternate.get("key"))}
-            elif old.get("peer") and data.get("keep_peer"):
-                alternate = old["peer"]
             backup = data.get("backup") or ""
             if backup:
                 backup = list(local_peer(backup))
                 if not primary or backup == primary:
                     raise p.Problem("ورودی Paqet جایگزین باید با ورودی اصلی متفاوت باشد.")
             selected = data.get("selected")
-            if not isinstance(selected, str) or not {"paqet": primary, "https": alternate, "standby": backup}.get(selected):
+            if not isinstance(selected, str) or not {"paqet": primary, "https": alternate, "quic": quic, "standby": backup}.get(selected):
                 raise p.Problem("مسیر انتخابی تنظیم نشده است.")
             probe = data.get("probe", "tls")
             if probe not in ("tcp", "tls", "http", "https"):
@@ -235,7 +254,7 @@ class Relay:
                     raise p.Problem("مسیر HTTP باید با / آغاز شود و فاصله نداشته باشد.")
             if data.get("automatic") and probe == "tcp":
                 raise p.Problem("جابه‌جایی خودکار به آزمون لایهٔ برنامه نیاز دارد.")
-            config.update(primary=primary, peer=alternate, backup=backup, selected=selected, probe=probe,
+            config.update(primary=primary, peer=alternate, quic_peer=quic, backup=backup, selected=selected, probe=probe,
                           probe_host=probe_host, probe_path=path, automatic=data.get("automatic") is True,
                           budget=p.number(data.get("budget") or 0, 0, 999999, "سقف GiB"))
             for upstream in (primary, backup):
@@ -245,13 +264,24 @@ class Relay:
                     raise p.Problem("ورودی و مقصد Paqet روی یک سوکت قرار دارند.")
         else:
             raise p.Problem("نقش مسیر معتبر نیست.")
+        is_udp = listener_transport(config) == "quic"
         for other in self.configs.values():
-            if other["name"] == name:
+            other_is_udp = listener_transport(other) == "quic"
+            if other["name"] == name or other_is_udp != is_udp:
                 continue
             other_bind, other_port = p.endpoint(other["listen"], True)
             if port == other_port and (bind == other_bind or "0.0.0.0" in (bind, other_bind)):
                 raise p.Problem("پورت ورودی با مسیر دیگری تداخل دارد.")
         return config
+
+    def require_quic(self, required=True):
+        if required and not self.quic and not self.demo:
+            raise p.Problem("ماژول QUIC در دسترس نیست. نصب‌کننده را با --with-quic اجرا کنید.")
+
+    @staticmethod
+    def certificates(config):
+        directory = f'/etc/letsencrypt/live/{config["domain"]}'
+        return f"{directory}/fullchain.pem", f"{directory}/privkey.pem"
 
     async def listen(self, config):
         name = config["name"]
@@ -259,6 +289,16 @@ class Relay:
             return
         host, port = p.endpoint(config["listen"], True)
         options = {}
+        if listener_transport(config) == "quic":
+            self.require_quic()
+            try:
+                server, context = await quic_transport.listen(
+                    host, port, lambda reader, writer: self.accept(name, reader, writer),
+                    *self.certificates(config))
+            except (OSError, ValueError) as error:
+                raise p.Problem("پورت UDP یا گواهی QUIC در دسترس نیست.") from error
+            self.servers[name], self.quic_contexts[name] = server, context
+            return
         if config["role"] == "receiver":
             # The context is updated for future handshakes when the cert renews.
             context = self.reload_context(config)
@@ -270,6 +310,7 @@ class Relay:
     async def stop(self, name):
         server = self.servers.pop(name, None)
         self.contexts.pop(name, None)
+        self.quic_contexts.pop(name, None)
         if server:
             # Closing a listener leaves accepted connections with their original route.
             server.close()
@@ -319,7 +360,7 @@ class Relay:
         self.configs = updated
         self.runtime.pop(name, None)
         if not old or any(old.get(key) != new.get(key) for key in
-                          ("peer", "primary", "backup", "probe", "probe_host", "probe_path", "selected", "automatic")):
+                          ("peer", "quic_peer", "primary", "backup", "probe", "probe_host", "probe_path", "selected", "automatic")):
             if self.last_switch.pop(name, None):
                 self.persist_switch()
             self.history.pop(name, None)
@@ -328,10 +369,14 @@ class Relay:
 
     @staticmethod
     def routes(config):
-        return [name for name, value in (("paqet", config.get("primary")), ("https", config.get("peer")),
-                                        ("standby", config.get("backup"))) if value]
+        fields = (("paqet", "primary"), ("https", "peer"), ("quic", "quic_peer"), ("standby", "backup"))
+        return [name for name, field in fields if config.get(field)]
 
     async def outbound(self, config, route):
+        if route == "quic":
+            if not self.quic:
+                raise ConnectionError("QUIC unavailable")
+            return await self.quic.open(config["quic_peer"])
         if route != "https":
             upstream = config["primary" if route == "paqet" else "backup"]
             return await asyncio.wait_for(asyncio.open_connection(*upstream, limit=8192), 4)
@@ -352,7 +397,26 @@ class Relay:
             raise
         return stream
 
+    async def receive_quic(self, config, stream):
+        reader, writer = stream
+        if not await quic_transport.authenticate(reader, config["key"]):
+            writer.write(b"\x01")
+            return None
+        try:
+            target = await asyncio.wait_for(asyncio.open_connection(*config["target"], limit=8192), 4)
+        except (OSError, asyncio.TimeoutError):
+            writer.write(b"\x02")
+            return None
+        try:
+            writer.write(b"\x00")
+        except OSError:
+            await close(target[1])
+            raise
+        return target
+
     async def receive(self, config, stream):
+        if listener_transport(config) == "quic":
+            return await self.receive_quic(config, stream)
         lines = (await read_header(stream[0])).split(b"\r\n")
         _, port = p.endpoint(config["listen"], True)
         authority = f'{config["domain"]}:{port}'
@@ -507,12 +571,10 @@ class Relay:
                                     await self.listen(config)
                                 except (OSError, p.Problem):
                                     logging.warning("Could not open relay listener %s", name)
-                        for name, context in self.contexts.items():
+                        for name, context in {**self.contexts, **self.quic_contexts}.items():
                             try:
-                                domain = self.configs[name]["domain"]
-                                context.load_cert_chain(f"/etc/letsencrypt/live/{domain}/fullchain.pem",
-                                                        f"/etc/letsencrypt/live/{domain}/privkey.pem")
-                            except OSError:
+                                context.load_cert_chain(*self.certificates(self.configs[name]))
+                            except (OSError, ValueError):
                                 logging.warning("Could not reload TLS certificate for %s", name)
                 entries = [c for c in self.configs.values() if c["role"] == "entry"]
                 await asyncio.gather(*(self.monitor(c) for c in entries))
@@ -585,8 +647,9 @@ class Relay:
             record = self.runtime.get(name, {})
             used = self.totals.get(name, {}).get(period, 0)
             budget = config.get("budget", 0) * 1024**3
-            rows.append({**{k: v for k, v in config.items() if k not in ("key", "peer")},
-                         "has_peer": bool(config.get("peer")), "routes": self.routes(config),
+            rows.append({**{k: v for k, v in config.items() if k not in ("key", "peer", "quic_peer")},
+                         "has_peer": bool(config.get("peer")), "has_quic_peer": bool(config.get("quic_peer")),
+                         "routes": self.routes(config),
                          "configured": config.get("selected"),
                          "selected": self.active_route(config),
                          "tests": record.get("tests", {}), "switched": self.last_switch.get(name, {}).get("switched"),
@@ -595,14 +658,14 @@ class Relay:
                          "projected_days": round(budget / used * (now.day - 1 + now.hour / 24), 1)
                          if budget and used and now.day >= 2 else None,
                          "history": self.history.get(name, []), "comparison": self.comparisons.get(name)})
-        return {"demo": self.demo, "rows": json.loads(json.dumps(rows))}
+        return {"demo": self.demo, "quic": bool(self.quic) or self.demo, "rows": json.loads(json.dumps(rows))}
 
     async def peer(self, name):
         config = self.configs.get(name, {}) if isinstance(name, str) else {}
         if config.get("role") != "receiver":
-            raise p.Problem("گیرندهٔ HTTPS پیدا نشد.")
+            raise p.Problem("گیرنده پیدا نشد.")
         _, port = p.endpoint(config["listen"], True)
-        return {"format": "paqet-https-v1", "domain": config["domain"], "port": port, "key": config["key"]}
+        return {"format": f"paqet-{listener_transport(config)}-v1", "domain": config["domain"], "port": port, "key": config["key"]}
 
     def call(self, method, *args, timeout=8):
         future = asyncio.run_coroutine_threadsafe(getattr(self, method)(*args), self.loop)

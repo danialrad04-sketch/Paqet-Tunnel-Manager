@@ -1178,8 +1178,9 @@ $("#probe-live").onchange = () => { if ($("#probe-live").checked) probe(); };
 setInterval(() => { if (!document.hidden && $("#probe-live").checked) probe(); }, 30000);
 
 const relayForm = $("#relay-form");
-const routeNames = {paqet:"Paqet", https:"HTTPS", standby:"Paqet آماده‌به‌کار"};
-let relayProfile, storedRelayPeer, relayLoading = false;
+const routeNames = {paqet:"Paqet", https:"HTTPS", quic:"QUIC", standby:"Paqet آماده‌به‌کار"};
+let relayProfile, quicProfile, storedRelayPeer, storedQuicPeer, relayLoading = false;
+let quicAvailable = false;
 
 function downloadJson(filename, value) {
   const link = document.createElement("a");
@@ -1203,7 +1204,7 @@ function socketLabel(value) {
 }
 
 function updateRelayForm() {
-  const {role, listen, target, domain, selected: route, primary, backup, probe, probe_host, probe_path} = relayForm.elements;
+  const {role, transport, listen, target, domain, selected: route, primary, backup, probe, probe_host, probe_path} = relayForm.elements;
   const receiver = role.value === "receiver";
   $("#receiver-fields").hidden = !receiver;
   $("#entry-fields").hidden = receiver;
@@ -1214,24 +1215,32 @@ function updateRelayForm() {
   relayForm.elements.automatic.disabled = !receiver && probe.value === "tcp";
   if (relayForm.elements.automatic.disabled) relayForm.elements.automatic.checked = false;
   const peer = relayProfile ? relayProfile.domain + ":" + relayProfile.port : storedRelayPeer ? "گیرندهٔ HTTPS ثبت‌شده" : "فایل گیرنده";
-  const hops = {paqet:primary.value, standby:backup.value, https:peer};
+  const quic = quicProfile ? quicProfile.domain + ":" + quicProfile.port : storedQuicPeer ? "گیرندهٔ QUIC ثبت‌شده" : "فایل گیرندهٔ QUIC";
+  const hops = {paqet:primary.value, standby:backup.value, https:peer, quic};
+  listen.placeholder = receiver ? (transport.value === "quic" ? "0.0.0.0:24443" : "0.0.0.0:8443") : "127.0.0.1:24105";
   $("#relay-preview").textContent = receiver
-    ? [domain.value || "دامنهٔ خارج", listen.value || "شنوندهٔ TLS", target.value || "مقصد محلی"].join(" → ")
+    ? [domain.value || "دامنهٔ خارج", listen.value || (transport.value === "quic" ? "شنوندهٔ UDP" : "شنوندهٔ TLS"), target.value || "مقصد محلی"].join(" → ")
     : ["اتصال کاربر", listen.value || "ورودی ایران", hops[route.value] || routeNames[route.value], "سرویس روی خارج"].join(" → ");
 }
 
 function openRelay(row) {
   relayForm.reset();
-  relayProfile = undefined;
+  relayProfile = quicProfile = undefined;
+  storedQuicPeer = Boolean(row?.has_quic_peer);
+  $("#quic-profile-status").textContent = storedQuicPeer ? "فایل قبلی حفظ می‌شود." : "اختیاری";
   storedRelayPeer = Boolean(row?.has_peer);
   $("#relay-profile-status").textContent = storedRelayPeer ? "فایل اتصال قبلی حفظ می‌شود." : "اختیاری";
-  for (const key of ["name", "role", "listen", "domain", "target", "primary", "backup", "probe", "probe_host", "probe_path", "budget"]) {
+  for (const key of ["name", "role", "transport", "listen", "domain", "target", "primary", "backup", "probe", "probe_host", "probe_path", "budget"]) {
     if (row?.[key] !== undefined) relayForm.elements[key].value = socketLabel(row[key]) || relayForm.elements[key].value;
   }
   relayForm.elements.selected.value = row?.configured || "paqet";
   relayForm.elements.automatic.checked = Boolean(row?.automatic);
   relayForm.elements.name.readOnly = Boolean(row);
   relayForm.elements.role.disabled = Boolean(row);
+  relayForm.elements.transport.disabled = Boolean(row);
+  relayForm.elements.transport.querySelector('[value="quic"]').disabled = !quicAvailable;
+  relayForm.elements.selected.querySelector('[value="quic"]').disabled = !quicAvailable;
+  $("#quic-profile").disabled = !quicAvailable;
   showError("#relay-form-error");
   updateRelayForm();
   $("#relay-dialog").showModal();
@@ -1239,17 +1248,24 @@ function openRelay(row) {
 
 $("#add-relay").onclick = () => openRelay();
 relayForm.oninput = updateRelayForm;
-$("#relay-profile").onchange = async (event) => {
-  relayProfile = undefined;
-  showError("#relay-form-error");
-  try {
-    const result = await jsonFile(event.target);
-    if (result && result.format !== "paqet-https-v1") throw Error("فایل از گیرندهٔ HTTPS صادر نشده است.");
-    relayProfile = result;
-  } catch (error) { showError("#relay-form-error", error.message); }
-  $("#relay-profile-status").textContent = relayProfile?.domain || (storedRelayPeer ? "فایل قبلی حفظ می‌شود." : "اختیاری");
-  updateRelayForm();
-};
+for (const [selector, kind] of [["#relay-profile", "https"], ["#quic-profile", "quic"]]) {
+  $(selector).onchange = async event => {
+    let profile;
+    showError("#relay-form-error");
+    try {
+      const result = await jsonFile(event.target);
+      if (result && result.format !== "paqet-" + kind + "-v1") {
+        throw Error("فایل از گیرندهٔ " + kind.toUpperCase() + " صادر نشده است.");
+      }
+      profile = result;
+    } catch (error) { showError("#relay-form-error", error.message); }
+    if (kind === "quic") quicProfile = profile;
+    else relayProfile = profile;
+    const stored = kind === "quic" ? storedQuicPeer : storedRelayPeer;
+    $(selector + "-status").textContent = profile?.domain || (stored ? "فایل قبلی حفظ می‌شود." : "اختیاری");
+    updateRelayForm();
+  };
+}
 relayForm.onsubmit = async (event) => {
   event.preventDefault();
   const button = relayForm.querySelector("[type=submit]");
@@ -1257,7 +1273,8 @@ relayForm.onsubmit = async (event) => {
   try {
     await api("relays", {...Object.fromEntries(new FormData(relayForm)), action:"save",
       role:relayForm.elements.role.value, automatic:relayForm.elements.automatic.checked,
-      peer:relayProfile, keep_peer:storedRelayPeer});
+      transport:relayForm.elements.transport.value,
+      peer:relayProfile, keep_peer:storedRelayPeer, quic_peer:quicProfile, keep_quic_peer:storedQuicPeer});
     $("#relay-dialog").close();
     toast("مسیر ذخیره شد.");
     await loadRelays();
@@ -1269,7 +1286,7 @@ async function operateRelay(row, action, extra = {}) {
   showError("#relay-error");
   try {
     const result = await api("relays", {name:row.name, action, ...extra});
-    if (action === "profile") downloadJson(row.name + "-https-peer.json", result);
+    if (action === "profile") downloadJson(row.name + "-" + (row.transport || "https") + "-peer.json", result);
     else await loadRelays();
   } catch (error) { showError("#relay-error", error.message); }
 }
@@ -1304,7 +1321,7 @@ function relayCard(row, demo) {
   const actions = document.createElement("div");
   actions.className = "inventory-actions";
   if (row.role === "receiver") {
-    addRelayInfo(body, "گیرندهٔ HTTPS", row.domain + " → " + socketLabel(row.target), "ltr");
+    addRelayInfo(body, row.transport === "quic" ? "گیرندهٔ QUIC روی UDP" : "گیرندهٔ HTTPS", row.domain + " → " + socketLabel(row.target), "ltr");
     listButton(actions, "دریافت فایل اتصال", () => operateRelay(row, "profile"));
   } else {
     addRelayInfo(body, "مسیر فعال", routeNames[row.selected] + (row.automatic ? " · جابه‌جایی خودکار" : ""));
@@ -1358,6 +1375,8 @@ async function loadRelays() {
   relayLoading = true;
   try {
     const data = await api("relays");
+    quicAvailable = data.quic;
+    $("#quic-install-hint").hidden = quicAvailable;
     const hash = JSON.stringify(data);
     if (hash === lastRelays) return;
     lastRelays = hash;

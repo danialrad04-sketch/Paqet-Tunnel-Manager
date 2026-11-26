@@ -7,6 +7,7 @@ Usage:
   sudo bash install-web.sh   # downloads the bundled core version if missing
   sudo bash install-web.sh --public-http
   sudo bash install-web.sh --local-http
+  sudo bash install-web.sh --public-http --with-quic
   sudo bash install-web.sh --core /path/to/paqet --sha256 SHA256
   sudo bash install-web.sh --core-url https://example.org/paqet.tar.gz --sha256 SHA256
 EOF
@@ -16,10 +17,12 @@ core=
 url=
 checksum=
 listen=
+with_quic=no
 while (($#)); do
     case $1 in
         --public-http) listen=0.0.0.0; shift ;;
         --local-http) listen=127.0.0.1; shift ;;
+        --with-quic) with_quic=yes; shift ;;
         --core|--core-url|--sha256)
             [[ $# -ge 2 ]] || { usage >&2; exit 2; }
             case $1 in
@@ -107,7 +110,26 @@ fi
 
 install -d -m 0755 /opt/paqet-panel /opt/paqet-panel/static /opt/paqet-panel/static/fonts
 install -d -m 0700 /etc/paqet-panel
-install -m 0644 "$source_dir"/web/{panel,relay,operations,recovery}.py /opt/paqet-panel/
+panel_python=/usr/bin/python3
+quic_python=/opt/paqet-panel/quic-venv/bin/python
+if [[ $with_quic == yes ]]; then
+    /usr/bin/apt-get install -y python3-venv
+    if [[ -x $quic_python ]]; then
+        "$quic_python" -m pip --disable-pip-version-check install --only-binary=:all: 'aioquic==1.9.2'
+    else
+        /usr/bin/python3 -m venv --system-site-packages "$staging/quic-venv"
+        "$staging/quic-venv/bin/python" -m pip --disable-pip-version-check install --only-binary=:all: 'aioquic==1.9.2'
+        mv -T -- "$staging/quic-venv" /opt/paqet-panel/quic-venv
+    fi
+fi
+if [[ -x $quic_python ]]; then
+    if ! "$quic_python" -c 'from importlib.metadata import version; import aioquic, yaml; assert version("aioquic") == "1.9.2"'; then
+        echo 'The QUIC environment is incomplete. Run the installer again with --with-quic.' >&2
+        exit 1
+    fi
+    panel_python=$quic_python
+fi
+install -m 0644 "$source_dir"/web/{panel,relay,operations,recovery,quic_transport}.py /opt/paqet-panel/
 install -m 0755 "$source_dir/web/packet-rules.sh" /opt/paqet-panel/packet-rules.sh
 install -m 0644 "$source_dir"/web/static/*.html "$source_dir"/web/static/*.css "$source_dir"/web/static/*.js /opt/paqet-panel/static/
 install -m 0644 "$source_dir"/web/static/fonts/* /opt/paqet-panel/static/fonts/
@@ -119,7 +141,7 @@ if [[ -n $listen ]]; then
     (umask 077; printf 'PAQET_HTTP_BIND=%s\n' "$listen" > /etc/paqet-panel/http.env)
 fi
 
-cat > /etc/systemd/system/paqetpanel.service <<'UNIT'
+cat > /etc/systemd/system/paqetpanel.service <<UNIT
 [Unit]
 Description=Paqet local web administration
 After=network.target
@@ -127,7 +149,7 @@ After=network.target
 [Service]
 Type=exec
 EnvironmentFile=-/etc/paqet-panel/http.env
-ExecStart=/usr/bin/python3 /opt/paqet-panel/panel.py
+ExecStart=$panel_python /opt/paqet-panel/panel.py
 Restart=on-failure
 RestartSec=3
 UMask=0077
