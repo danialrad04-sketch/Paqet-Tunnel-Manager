@@ -7,19 +7,18 @@
 <meta name="theme-color" content="#09090b">
 <title>Paqet · میز کار</title>
 <link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=quick-update">
-<script src="/app.js?v=quick-update" defer></script>
+<link rel="stylesheet" href="/styles.css?v=responsive-panel">
+<script src="/app.js?v=responsive-panel" defer></script>
 </head>
 <body>
 
 <!-- ───────────── Login ───────────── -->
 <div id="login" class="login" hidden>
-  <div class="login-grid" aria-hidden="true"></div>
   <form id="login-form" class="card login-card">
     <div class="brand"><span class="brand-mark" data-icon="tunnel"></span><span class="brand-text"><strong>Paqet</strong><small>مدیریت تونل</small></span></div>
     <div class="login-copy">
       <h1>ورود به میز کار</h1>
-      <p class="muted">توکن مدیریتی که هنگام نصب ساخته شد را وارد کنید. مسیر فایل: <code dir="ltr">/etc/paqet-panel/token</code></p>
+      <p class="muted">توکن مدیر هنگام نصب در <code dir="ltr">/etc/paqet-panel/token</code> ذخیره شده است.</p>
     </div>
     <label class="field">توکن مدیر
       <span class="input-wrap"><span data-icon="key"></span><input name="token" type="password" dir="ltr" required autocomplete="current-password" placeholder="••••••••••••"></span>
@@ -36,8 +35,7 @@
       <div class="brand"><span class="brand-mark" data-icon="tunnel"></span><span class="brand-text"><strong>Paqet</strong><small>مدیریت تونل</small></span></div>
       <button id="menu-close" class="btn ghost icon only-mobile" type="button" aria-label="بستن منو"><span data-icon="close"></span></button>
     </div>
-    <div class="nav-label">فضای کاری</div>
-    <nav>
+    <nav aria-label="بخش‌های پنل">
       <button data-page="overview" class="selected" aria-current="page"><span data-icon="grid"></span>نمای کلی</button>
       <button data-page="tunnels"><span data-icon="route"></span>تونل‌ها<span id="nav-count" class="nav-count" hidden></span></button>
       <button data-page="relays"><span data-icon="radar"></span>مسیرها و پایش</button>
@@ -48,7 +46,7 @@
     <div class="sidebar-bottom">
       <div class="host-tile">
         <span class="tile-icon"><span class="live-dot"></span><span data-icon="server"></span></span>
-        <span class="host-tile-text"><b id="sidebar-host" dir="ltr">—</b><small>میزبان محلی</small></span>
+        <span class="host-tile-text"><b id="sidebar-host" dir="ltr">—</b><small id="sidebar-host-label">میزبان محلی</small></span>
       </div>
       <button id="logout" class="btn ghost block" hidden><span data-icon="logout"></span>خروج از پنل</button>
     </div>
@@ -71,25 +69,28 @@
     </header>
 
     <div class="content">
-      <!-- Hero: the tunnel path itself -->
-      <section id="hero" class="hero card">
+      <section id="hero" class="hero card" aria-labelledby="overview-title">
         <div class="hero-copy">
-          <span class="chip"><span class="chip-dot"></span><b id="hero-region">موقعیت تعیین نشده</b></span>
-          <h1>مرکز عملیات شبکه</h1>
-          <p id="hero-topology">در حال خواندن نقش‌های Paqet از تنظیمات میزبان…</p>
+          <h1 id="overview-title">وضعیت تونل‌ها</h1>
+          <div class="hero-meta"><b id="hero-region">موقعیت تعیین نشده</b><span id="hero-topology">در حال شناسایی نقش میزبان…</span></div>
           <div class="hero-actions">
             <button class="btn primary" data-create><span data-icon="plus"></span>تونل جدید</button>
-            <button class="btn outline" type="button" data-open-receiver>گواهی خودکار</button>
             <button class="btn outline" id="setup-help">راهنمای اتصال</button>
-            <button class="btn outline" data-page-link="host"><span data-icon="server"></span>وضعیت میزبان</button>
+          </div>
+          <div class="hero-shortcuts">
+            <button class="btn ghost sm" type="button" data-open-receiver><span data-icon="key"></span>گواهی خودکار</button>
+            <button class="btn ghost sm" data-page-link="host"><span data-icon="server"></span>وضعیت میزبان</button>
           </div>
         </div>
-        <div class="path-viz" aria-hidden="true">
-          <div class="node node-local"><span class="node-icon" data-icon="server"></span><b>این میزبان</b><small id="path-local">—</small></div>
-          <div class="wire"><i></i><i></i><i></i><span class="wire-label">KCP · raw socket</span></div>
-          <div class="node node-tunnel"><span class="node-icon" data-icon="tunnel"></span><b>Paqet</b><small id="path-count">—</small></div>
-          <div class="wire"><i></i><i></i><i></i></div>
-          <div class="node node-remote"><span class="node-icon" data-icon="globe"></span><b>همتا</b><small id="path-remote">—</small></div>
+        <div class="path-viz" role="group" aria-labelledby="path-title">
+          <div class="path-heading"><h2 id="path-title">مسیر Paqet</h2><code>KCP</code></div>
+          <div class="path-nodes">
+            <div class="node node-local"><span class="node-icon" data-icon="server"></span><b>این میزبان</b><small id="path-local" dir="auto">—</small></div>
+            <span class="wire" aria-hidden="true"></span>
+            <div class="node node-tunnel"><span class="node-icon" data-icon="tunnel"></span><b>Paqet</b><small id="path-count">—</small></div>
+            <span class="wire" aria-hidden="true"></span>
+            <div class="node node-remote"><span class="node-icon" data-icon="globe"></span><b>همتا</b><small id="path-remote" dir="auto">—</small></div>
+          </div>
         </div>
       </section>
 
@@ -99,12 +100,12 @@
         <button id="show-failed" class="btn outline sm">مشاهدهٔ تونل‌ها</button>
       </section>
 
-      <div id="metrics" class="metrics">
-        <article class="card metric"><div class="metric-head"><span>همهٔ تونل‌ها</span><span class="metric-icon" data-icon="route"></span></div><strong id="total">—</strong><small class="muted">سرویس ثبت‌شده روی میزبان</small></article>
-        <article class="card metric ok"><div class="metric-head"><span>فعال</span><span class="metric-icon" data-icon="activity"></span></div><strong id="active">—</strong><small class="muted">سرویس در حال اجرا</small></article>
-        <article class="card metric warn"><div class="metric-head"><span>متوقف</span><span class="metric-icon" data-icon="pause"></span></div><strong id="inactive">—</strong><small class="muted">آمادهٔ شروع</small></article>
-        <article class="card metric bad"><div class="metric-head"><span>ناموفق</span><span class="metric-icon" data-icon="alert"></span></div><strong id="failed">—</strong><small class="muted">نیاز به بررسی گزارش</small></article>
-      </div>
+      <dl id="metrics" class="card metrics" aria-label="تعداد تونل‌ها به تفکیک وضعیت">
+        <div class="metric"><dt>همهٔ تونل‌ها</dt><dd id="total">—</dd></div>
+        <div class="metric ok"><dt>فعال</dt><dd id="active">—</dd></div>
+        <div class="metric warn"><dt>متوقف</dt><dd id="inactive">—</dd></div>
+        <div class="metric bad"><dt>ناموفق</dt><dd id="failed">—</dd></div>
+      </dl>
 
       <section id="telemetry" class="card telemetry">
         <div class="card-head">
@@ -137,10 +138,10 @@
         <div class="card-head">
           <div><h2>تونل‌ها</h2><p class="muted">سرویس‌های Paqet روی این میزبان</p></div>
           <div class="inventory-actions">
-            <button class="btn outline" id="open-yaml-create"><span data-icon="code"></span>ساخت از YAML</button>
-            <button id="open-recovery" class="btn outline"><span data-icon="undo"></span>بازیابی روی این میزبان</button>
-            <button id="open-batch" class="btn outline"><span data-icon="upload"></span>راه‌اندازی گروهی</button>
             <button class="btn primary" data-create><span data-icon="plus"></span>افزودن تونل</button>
+            <button class="btn outline" id="open-yaml-create"><span data-icon="code"></span>ساخت از YAML</button>
+            <button id="open-recovery" class="btn outline"><span data-icon="undo"></span>بازیابی</button>
+            <button id="open-batch" class="btn outline"><span data-icon="upload"></span>راه‌اندازی گروهی</button>
           </div>
         </div>
         <div class="filters">
@@ -296,9 +297,9 @@
         <label><input type="radio" name="method" value="https"><span><b>HTTPS</b><small>TCP</small></span></label>
       </fieldset>
       <p id="create-quic-status" class="muted" role="status" hidden></p>
-      <fieldset class="segmented" aria-label="نقش">
-        <label><input type="radio" name="role-pick" value="server"><span data-icon="server"></span><span><b>سرور</b><small>میزبان خارج، پذیرندهٔ اتصال</small></span></label>
-        <label><input type="radio" name="role-pick" value="client"><span data-icon="globe"></span><span><b>کلاینت</b><small>میزبان ایران، اتصال به سرور</small></span></label>
+      <fieldset class="segmented role-picker" aria-label="نقش">
+        <label><input type="radio" name="role-pick" value="server"><span data-icon="server"></span><span><b>سرور خارج</b><small>پذیرندهٔ اتصال</small></span></label>
+        <label><input type="radio" name="role-pick" value="client"><span data-icon="globe"></span><span><b>کلاینت ایران</b><small>اتصال به سرور</small></span></label>
       </fieldset>
       <fieldset id="paqet-create-fields" aria-label="تنظیمات Paqet">
         <div class="form-grid">

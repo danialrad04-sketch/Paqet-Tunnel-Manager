@@ -170,6 +170,7 @@ function showWorkspace(demo) {
   $("#login").hidden = true;
   $("#workspace").hidden = false;
   $("#demo").hidden = !demo;
+  $("#sidebar-host-label").textContent = demo ? "داده‌های نمایشی" : "میزبان محلی";
   $("#logout").hidden = demo;
   if (location.hash === "#updates") selectPage("updates");
 }
@@ -269,15 +270,24 @@ function render() {
     row.ondblclick = (event) => {
       if (!event.target.closest("button, input")) openDetails(tunnel.name);
     };
-    const identity = cell(row, "", "div");
-    identity.className = "identity " + (tunnel.role || "");
-    const mark = document.createElement("span");
-    mark.innerHTML = icon("route");
-    const name = document.createElement("b");
+    const identity = cell(row, "", "button");
+    identity.type = "button";
+    identity.className = "identity";
+    identity.setAttribute("aria-label", "باز کردن تونل " + tunnel.name);
+    identity.onclick = () => openDetails(tunnel.name);
+    const mark = iconElement(tunnel.role === "server" ? "server" : "route", "identity-mark");
+    const labels = document.createElement("div");
+    labels.className = "identity-labels";
+    const name = document.createElement("bdi");
     name.dir = "ltr";
     name.textContent = tunnel.name;
-    identity.append(mark, name);
-    cell(row, roles[tunnel.role] || "نامشخص");
+    const roleLabel = roles[tunnel.role] || "نامشخص";
+    const mobileRole = document.createElement("small");
+    mobileRole.textContent = roleLabel;
+    mobileRole.className = "identity-role";
+    labels.append(name, mobileRole);
+    identity.append(mark, labels);
+    cell(row, roleLabel);
     const endpoint = tunnel.endpoint && tunnel.endpoint.startsWith(":") ? "0.0.0.0" + tunnel.endpoint : tunnel.endpoint;
     cell(row, endpoint || "—", "code").dir = "ltr";
     const badge = cell(row, states[tunnel.state] || "نامشخص");
@@ -1244,7 +1254,13 @@ async function probe() {
     if (generation === probeGeneration) $("#probe-result").textContent = error.message;
   } finally { button.disabled = false; }
 }
-$("#details").addEventListener("close", clearProbe);
+$("#details").addEventListener("close", () => {
+  clearProbe();
+  if (document.activeElement === document.body && !$("#tunnels").hidden) {
+    const label = CSS.escape("باز کردن تونل " + selected);
+    $("#rows").querySelector('[aria-label="' + label + '"]')?.focus({preventScroll:true});
+  }
+});
 $("#probe-now").onclick = probe;
 $("#probe-listen").onchange = clearProbe;
 $("#probe-live").onchange = () => { if ($("#probe-live").checked) probe(); };
