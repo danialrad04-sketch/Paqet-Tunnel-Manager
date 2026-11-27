@@ -241,7 +241,11 @@ class Relay:
             raise p.Problem("نقش مسیر معتبر نیست.")
         if old and old["role"] != role:
             raise p.Problem("برای تغییر نقش، مسیر دیگری بسازید.")
-        bind, port = p.endpoint(data.get("listen"), True)
+        transport = data.get("transport") or old.get("transport", "https")
+        default_bind = "127.0.0.1:24105"
+        if role == "receiver":
+            default_bind = "0.0.0.0:24443" if transport == "quic" else "0.0.0.0:8443"
+        bind, port = p.endpoint(data.get("listen") or default_bind, True)
         if port == self.panel_port or port < 1024 or not bind or ":" in bind:
             # Server role can use 443 when available.
             if not (role == "receiver" and port == 443 and port != self.panel_port and bind and ":" not in bind):
@@ -255,7 +259,10 @@ class Relay:
                 raise p.Problem("برای تغییر پروتکل، گیرندهٔ جدید بسازید.")
             self.require_quic(transport == "quic")
             config["transport"] = transport
-            target = list(local_peer(data.get("target")))
+            target = data.get("target")
+            if isinstance(target, str) and re.fullmatch(r"[0-9]{1,5}", target):
+                target = "127.0.0.1:" + target
+            target = list(local_peer(target))
             if transport == "https" and target[1] == port and bind in ("0.0.0.0", target[0]):
                 raise p.Problem("شنونده و مقصد گیرنده روی یک سوکت قرار دارند.")
             if target[1] == self.panel_port:
@@ -359,10 +366,21 @@ class Relay:
         async with self.configuration_lock:
             return await self.change_locked(action, data)
 
+    def named_relay(self, data):
+        if data.get("name") == "" and data.get("role") in ("entry", "receiver"):
+            prefix = "relay-" + data["role"]
+            for i in range(1, 1001):
+                name = f"{prefix}-{i:02d}"
+                if name not in self.configs:
+                    return {**data, "name": name}
+            raise p.Problem("برای مسیر نام دیگری وارد کنید.")
+        return data
+
     async def save_with_certificate(self, data):
         async with self.configuration_lock:
             if data.get("role") != "receiver":
                 raise p.Problem("صدور گواهی برای گیرندهٔ HTTPS یا QUIC است.")
+            data = self.named_relay(data)
             config = self.parse(data)
             name, domain = config["name"], config["domain"]
             original = self.configs.get(name)
@@ -401,6 +419,8 @@ class Relay:
             job["status"] = "done"
 
     async def change_locked(self, action, data):
+        if action == "save":
+            data = self.named_relay(data)
         name = data.get("name")
         if not isinstance(name, str):
             raise p.Problem("نام مسیر معتبر نیست.")

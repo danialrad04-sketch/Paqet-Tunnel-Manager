@@ -429,7 +429,13 @@ class Manager:
         if taken:
             raise Problem("این نام قبلاً در تنظیمات یا systemd ثبت شده است.")
 
-    def create(self, data):
+    def create(self, data, *, preview=False):
+        guided = data.get("guided") is True and "yaml" not in data
+        if preview and not guided:
+            raise Problem("این پیش‌نمایش برای فرم راه‌اندازی است.")
+        if guided:
+            sockets = self.operations.listeners()
+            data = self.operations.guided_defaults(data, sockets)
         if "yaml" in data:
             name = data.get("name", "")
             if not isinstance(name, str) or not re.fullmatch(NAME, name):
@@ -441,6 +447,13 @@ class Manager:
             name, port, config = validate(data)
         self.check_configuration(name, config)
         self.check_name_available(name)
+        if guided:
+            self.set_create_network(config, port)
+            report = self.operations.review_creation(name, port, config, sockets)
+            if preview:
+                return report
+            if data.get("confirmed") != report:
+                raise Problem("پیش‌نمایش تغییر کرده است. دوباره پیش‌نمایش بگیرید.")
         result = {"name": name}
         if config["role"] == "server":
             result["key"] = config["transport"]["kcp"]["key"]
@@ -460,12 +473,9 @@ class Manager:
                 if other["role"] == "server" and listen.rsplit(":", 1)[-1] == str(port):
                     raise Problem("این پورت قبلاً برای یک تونل سرور استفاده شده است.")
         if not config.get("network"):
-            device, address, mac = network(None if server else config["server"]["addr"].rsplit(":", 1)[0])
-            config["network"] = {"interface": device, "ipv4": {
-                "addr": f"{address}:{port if server else 0}", "router_mac": mac},
-                "tcp": {"local_flag": ["PA"]}}
-            if not server:
-                config["network"]["tcp"]["remote_flag"] = ["PA"]
+            self.set_create_network(config, port)
+        if not guided:
+            self.operations.native_validation(config)
         hooks = ""
         if server:
             helper = "/opt/paqet-panel/packet-rules.sh"
@@ -514,6 +524,19 @@ WantedBy=multi-user.target
         except (OSError, subprocess.SubprocessError):
             lines = ""
         return f"{unit(name)} — {error}\n{lines}".strip()
+
+    def set_create_network(self, config, port):
+        server = config["role"] == "server"
+        target = None if server else config["server"]["addr"].rsplit(":", 1)[0]
+        if self.demo:
+            device, address, mac = "eth0", "192.0.2.10", "02:00:00:00:00:01"
+        else:
+            device, address, mac = network(target)
+        flags = {"local_flag": ["PA"]}
+        if not server:
+            flags["remote_flag"] = ["PA"]
+        config["network"] = {"interface": device, "ipv4": {
+            "addr": f"{address}:{port if server else 0}", "router_mac": mac}, "tcp": flags}
 
     def editor_path(self, name):
         row = next((r for r in self.inventory() if r["name"] == name), {})
@@ -729,6 +752,7 @@ WantedBy=multi-user.target
             self.save_config(name, path, original, config, active)
 
     def save_config(self, name, path, original, config, active, text=None):
+        self.operations.native_validation(config)
         self.operations.remember(name, original)
         backup = self.backup_path(name)
         backup.parent.mkdir(mode=0o700, exist_ok=True)
@@ -1113,6 +1137,8 @@ class Panel(BaseHTTPRequestHandler):
             elif method == "POST" and path == "/api/region":
                 manager.set_region(self.payload().get("region"))
                 self.answer(200, {})
+            elif method == "POST" and path == "/api/tunnels/preview":
+                self.answer(200, manager.create(self.payload(), preview=True))
             elif method == "POST" and path == "/api/tunnels":
                 created = manager.create(self.payload())
                 logging.info("Provisioned %s", unit(created["name"]))
@@ -1150,11 +1176,7 @@ class Panel(BaseHTTPRequestHandler):
                     manager.replace_config(name, self.payload())
                     self.answer(200, {})
                 elif operation == "pair" and method == "GET":
-                    config = mapping(yaml.safe_load(manager.full_config(name)["yaml"]))
-                    if config.get("role") != "server":
-                        raise Problem("فایل اتصال از تونل سرور صادر می‌شود.")
-                    self.answer(200, {"format": "paqet-peer-v1", "port": str(mapping(config.get("listen")).get("addr", "")).rsplit(":", 1)[-1],
-                                      "transport": config.get("transport")})
+                    self.answer(200, manager.operations.peer_profile(name, host))
                 elif method == "GET" and operation == "logs":
                     self.answer(200, {"logs": manager.logs(name)})
                 elif method == "POST" and operation == "probe":

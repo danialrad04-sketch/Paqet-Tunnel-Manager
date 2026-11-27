@@ -7,8 +7,8 @@
 <meta name="theme-color" content="#09090b">
 <title>Paqet · میز کار</title>
 <link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=classic-panel">
-<script src="/app.js?v=classic-panel" defer></script>
+<link rel="stylesheet" href="/styles.css?v=guided-setup">
+<script src="/app.js?v=guided-setup" defer></script>
 </head>
 <body>
 
@@ -280,9 +280,9 @@
   <div class="modal-head"><h2 id="guide-title">راه‌اندازی ایران و خارج</h2><button class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
   <ol class="modal-body guide-steps">
     <li><b>نصب روی هر دو میزبان</b><p>نصب‌کنندهٔ main را با گزینهٔ public-http اجرا کنید و آدرس چاپ‌شده در پایان نصب را باز کنید. از «میزبان» موقعیت هر سرور را ثبت کنید.</p></li>
-    <li><b>ساخت پذیرنده روی سرور خارج</b><p>«تونل جدید» و نقش سرور را انتخاب کنید. پورت ارتباط Paqet را وارد کنید. پس از ساخت، در جزئیات سرویس فایل اتصال کلاینت را دریافت کنید. این فایل حاوی کلید است.</p></li>
-    <li><b>جفت‌سازی روی ایران</b><p>نقش کلاینت را انتخاب کنید، فایل اتصال را وارد کنید و IPv4 عمومی میزبان خارج را بنویسید.</p></li>
-    <li><b>تعریف ورودی کاربران</b><p>مثلاً برای انتقال پورت ۱۴۱۰۵ ایران به همان پورت روی میزبان خارج، ورودی را <bdi>0.0.0.0:14105</bdi> و مقصد را <bdi>127.0.0.1:14105</bdi> بگذارید. پروتکل را مطابق برنامهٔ مقصد انتخاب کنید.</p></li>
+    <li><b>ساخت پذیرنده روی سرور خارج</b><p>در «افزودن تونل»، Paqet و نقش سرور را انتخاب کنید. پنل یک پورت آزاد پیشنهاد می‌دهد. پیش‌نمایش را تأیید کنید و از جزئیات تونل فایل اتصال کلاینت را بگیرید. این فایل حاوی کلید است.</p></li>
+    <li><b>جفت‌سازی روی ایران</b><p>نقش کلاینت را انتخاب و فایل اتصال را وارد کنید. اگر IPv4 عمومی سرور خارج در فایل نبود، آدرس قابل‌دسترسی آن را وارد کنید.</p></li>
+    <li><b>تعریف ورودی کاربران</b><p>برای انتقال TCP به همان شماره پورت روی خارج، کافی است پورت سرویس مانند <bdi>14105</bdi> را وارد کنید. برای پورت متفاوت یا UDP، از «افزودن قانون» استفاده کنید. پیش از راه‌اندازی، نگاشت را در پیش‌نمایش بررسی کنید.</p></li>
     <li><b>بررسی مسیر و عبور داده</b><p>در جزئیات کلاینت وضعیت سرویس و مسیر IPv4 را بررسی کنید. اگر مقصد TLS دارد، آزمون پاسخ TLS را اجرا کنید. برای سایر پروتکل‌ها یک درخواست با برنامهٔ واقعی از ورودی ایران بفرستید. هنگام خطای Message too large، مقدار MTU هر دو سمت را بررسی کنید.</p></li>
   </ol>
 </dialog>
@@ -302,13 +302,31 @@
         <label><input type="radio" name="role-pick" value="client"><span data-icon="globe"></span><span><b>کلاینت ایران</b><small>اتصال به سرور</small></span></label>
       </fieldset>
       <fieldset id="paqet-create-fields" aria-label="تنظیمات Paqet">
-        <div class="form-grid">
-          <label class="field">نام تونل<input name="name" required dir="ltr" maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,47}" placeholder="edge-01"></label>
-          <label class="field role-field">نقش<select name="role" class="select"><option value="server">سرور</option><option value="client">کلاینت</option></select></label>
-          <label class="field">پورت تونل<input name="port" required type="number" min="1" max="65535" value="443" dir="ltr"></label>
-          <label id="remote-label" class="field" hidden>IPv4 سرور مقصد<input name="remote" dir="ltr" placeholder="203.0.113.10"></label>
-          <label class="field wide">کلید مشترک<input name="key" type="password" dir="ltr" minlength="8" maxlength="128" autocomplete="off" placeholder="برای ساخت خودکار خالی بگذارید"></label>
+        <div class="guided-intro">
+          <span data-icon="sliders"></span>
+          <p id="guided-intro-text"></p>
         </div>
+        <div id="guided-peer-fields" class="guided-peer form-grid" hidden>
+          <label class="field wide">فایل اتصال سرور خارج<input id="peer-file" type="file" accept=".json,application/json"></label>
+          <p id="peer-status" class="muted wide" role="status">فایل را از جزئیات تونل روی سرور خارج دریافت کنید.</p>
+        </div>
+        <div class="form-grid">
+          <label class="field role-field">نقش<select name="role" class="select"><option value="server">سرور</option><option value="client">کلاینت</option></select></label>
+          <label id="remote-label" class="field wide" hidden>IPv4 سرور خارج<input name="remote" dir="ltr" placeholder="203.0.113.10"></label>
+        </div>
+        <details class="advanced" id="guided-connection" hidden>
+          <summary>ورود دستی مشخصات اتصال<span class="summary-chevron" data-icon="chevron-down"></span></summary>
+          <div class="form-grid">
+            <label class="field">پورت Paqet<input name="port" type="number" min="1" max="65535" dir="ltr"></label>
+            <label class="field">کلید مشترک<input name="key" type="password" dir="ltr" minlength="8" maxlength="128" autocomplete="off"></label>
+          </div>
+        </details>
+        <details class="advanced">
+          <summary><span data-icon="route"></span>تنظیمات اختیاری تونل<span class="summary-chevron" data-icon="chevron-down"></span></summary>
+          <div class="form-grid"><label class="field wide">نام تونل<input name="name" dir="ltr" maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,47}" placeholder="خودکار"></label>
+            <div class="form-grid wide" id="guided-server-overrides"><label class="field">پورت Paqet<input name="server_port" type="number" min="1" max="65535" placeholder="پورت آزاد" dir="ltr"></label><label class="field">کلید مشترک<input name="server_key" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="تولید خودکار" dir="ltr"></label></div>
+          </div>
+        </details>
         <details class="advanced">
           <summary><span data-icon="sliders"></span>تنظیمات پیشرفتهٔ KCP<span class="summary-chevron" data-icon="chevron-down"></span></summary>
           <div class="form-grid">
@@ -324,15 +342,21 @@
           <label class="field">بافر UDP (بایت)<input name="udpbuf" type="number" min="0" max="2147483647"></label>
         </div></details>
         <section id="forwards" class="forwards" hidden>
-          <label class="field">فایل اتصال سرور خارج<input id="peer-file" type="file" accept=".json,application/json"></label>
-          <p class="muted" id="peer-status"></p>
-          <label class="field">پورت SOCKS5 روی میزبان محلی<input name="socks" type="number" min="1" max="65535" dir="ltr" placeholder="اختیاری"></label>
-          <div class="form-grid"><label class="field">IPv4 شنود SOCKS5<input name="socks_ip" value="127.0.0.1" dir="ltr"></label><label class="field">کاربر SOCKS5<input name="socks_user"></label><label class="field">رمز SOCKS5<input name="socks_password" type="password" autocomplete="new-password"></label></div>
+          <label id="service-port-label" class="field">پورت سرویس روی سرور خارج<input name="service_port" type="number" min="1" max="65535" dir="ltr" placeholder="مثلاً 14105"><small class="muted">همین پورت روی ایران برای TCP باز می‌شود و به همان پورت روی خارج می‌رود.</small></label>
+          <details class="advanced">
+            <summary>تنظیمات SOCKS5<span class="summary-chevron" data-icon="chevron-down"></span></summary>
+            <div class="form-grid"><label class="field">پورت SOCKS5<input name="socks" type="number" min="1" max="65535" dir="ltr" placeholder="اختیاری"></label><label class="field">IPv4 شنود SOCKS5<input name="socks_ip" value="127.0.0.1" dir="ltr"></label><label class="field">کاربر SOCKS5<input name="socks_user"></label><label class="field">رمز SOCKS5<input name="socks_password" type="password" autocomplete="new-password"></label></div>
+          </details>
           <div class="forward-head"><h3>انتقال پورت</h3><button id="add-forward" type="button" class="btn outline sm"><span data-icon="plus"></span>افزودن قانون</button></div>
           <div id="forward-rows"></div>
           <p id="create-route-preview" class="route-flow" dir="ltr" aria-live="polite" hidden></p>
         </section>
       </fieldset>
+      <section id="guided-review" class="guided-review" aria-labelledby="guided-review-title" hidden>
+        <div class="guided-review-head"><span data-icon="check"></span><h3 id="guided-review-title" tabindex="-1">بازبینی قبل از ساخت</h3></div>
+        <dl id="guided-facts" class="guided-facts"></dl>
+        <ul id="guided-forward-list" hidden></ul>
+      </section>
       <p class="error banner" id="create-error" role="alert" hidden></p>
     </div>
     <div class="modal-foot"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary" type="submit">ساخت و راه‌اندازی</button></div>
@@ -447,19 +471,20 @@
   <form id="relay-form">
     <div class="modal-head"><h2 id="relay-title">تنظیم مسیر TCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body form-grid">
-      <label class="field">نام مسیر<input name="name" dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,47}" required></label>
+      <label class="field">نام مسیر<input name="name" dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,47}" placeholder="خودکار"></label>
       <label class="field">نقش<select name="role"><option value="entry">ورودی سمت ایران</option><option value="receiver">گیرنده سمت خارج</option></select></label>
-      <label class="field wide">آدرس شنود IPv4 و پورت<input name="listen" dir="ltr" placeholder="127.0.0.1:24105" required></label>
+      <label class="field wide">آدرس شنود IPv4 و پورت<input name="listen" dir="ltr" placeholder="127.0.0.1:24105"><small class="muted">در صورت خالی بودن از نشانی پیشنهادی پیش‌نمایش استفاده می‌شود.</small></label>
       <div id="receiver-fields" class="form-grid wide" hidden>
         <label class="field wide">پروتکل گیرنده<select name="transport"><option value="https">HTTPS روی TCP</option><option value="quic">QUIC روی UDP</option></select></label>
         <label class="field">دامنه و نام گواهی<input name="domain" placeholder="relay.example.org" dir="ltr"></label>
-        <label class="field">مقصد روی خارج<input name="target" placeholder="127.0.0.1:14105" dir="ltr"></label>
+        <label class="field">پورت سرویس یا آدرس مقصد روی خارج<input name="target" placeholder="14105" dir="ltr"></label>
         <label class="route-check wide"><input name="issue_certificate" type="checkbox" checked> صدور خودکار گواهی Let’s Encrypt</label>
         <p class="muted hint wide">برای صدور و تمدید، DNS دامنه باید به این میزبان برسد و TCP پورت ۸۰ از اینترنت در دسترس و برای Certbot آزاد باشد. پنل از گواهی معتبر موجود برای همین نام هم استفاده می‌کند.</p>
       </div>
       <div id="entry-fields" class="form-grid wide">
-        <label class="field">شنوندهٔ Paqet روی ایران<input name="primary" placeholder="127.0.0.1:14105" dir="ltr"></label>
-        <label class="field">شنوندهٔ Paqet آماده‌به‌کار<input name="backup" placeholder="127.0.0.1:34105" dir="ltr"></label>
+        <label class="field">شنوندهٔ Paqet روی ایران<input name="primary" list="relay-paqet-listeners" placeholder="127.0.0.1:14105" dir="ltr"><small id="relay-primary-hint" class="muted" hidden></small></label>
+        <label class="field">شنوندهٔ Paqet آماده‌به‌کار<input name="backup" list="relay-paqet-listeners" placeholder="127.0.0.1:34105" dir="ltr"></label>
+        <datalist id="relay-paqet-listeners"></datalist>
         <label class="field wide">فایل اتصال HTTPS<input id="relay-profile" type="file" accept=".json,application/json"><small class="muted" id="relay-profile-status">اختیاری</small></label>
         <label class="field wide">فایل اتصال QUIC<input id="quic-profile" type="file" accept=".json,application/json"><small class="muted" id="quic-profile-status">اختیاری</small></label>
         <label class="field">مسیر اولیه<select name="selected"><option value="paqet">Paqet</option><option value="https">HTTPS</option><option value="quic">QUIC</option><option value="standby">Paqet آماده‌به‌کار</option></select></label>

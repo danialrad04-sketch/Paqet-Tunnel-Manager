@@ -675,6 +675,24 @@ async function loadArchives() {
 const create = $("#create-form");
 const createSubmit = create.querySelector("[type=submit]");
 let createSaving = false;
+let creationReview;
+let creationRevision = 0;
+let peerTransport;
+let peerFileLoading = false;
+
+function clearGuidedReview() {
+  creationReview = undefined;
+  creationRevision++;
+  $("#guided-review").hidden = true;
+  updateCreateMethod();
+}
+
+function updateQuickForward() {
+  const custom = Boolean($("#forward-rows").children.length);
+  $("#service-port-label").hidden = custom;
+  create.elements.service_port.disabled = custom || create.elements.role.value !== "client";
+}
+
 for (const method of create.querySelectorAll('[name="method"]')) {
   method.onchange = updateCreateMethod;
 }
@@ -685,8 +703,10 @@ function updateCreateMethod() {
   const unavailable = method === "quic" && quicAvailable !== true;
   const fields = $("#paqet-create-fields");
   fields.hidden = fields.disabled = !paqet;
-  labelButton(createSubmit, paqet ? "ساخت و راه‌اندازی" : "ادامهٔ تنظیم " + routeNames[method], paqet ? "play" : "arrow");
-  createSubmit.disabled = createSaving || unavailable;
+  const confirm = Boolean(creationReview);
+  labelButton(createSubmit, paqet ? (confirm ? "تأیید و راه‌اندازی" : "دیدن پیش‌نمایش") : "ادامهٔ تنظیم " + routeNames[method],
+    paqet ? (confirm ? "play" : "search") : "arrow");
+  createSubmit.disabled = createSaving || (paqet && peerFileLoading) || unavailable;
   const status = $("#create-quic-status");
   status.hidden = !unavailable;
   status.textContent = quicAvailable == null ? "در حال بررسی پشتیبانی QUIC…" :
@@ -694,17 +714,26 @@ function updateCreateMethod() {
 }
 
 for (const radio of create.querySelectorAll('[name="role-pick"]')) {
-  radio.onchange = () => { create.elements.role.value = radio.value; useRole(); };
+  radio.onchange = () => { create.elements.role.value = radio.value; useRole(); clearGuidedReview(); };
 }
 function useRole() {
   const client = create.elements.role.value === "client";
   for (const radio of create.querySelectorAll('[name="role-pick"]')) radio.checked = radio.value === create.elements.role.value;
-  $("#remote-label").hidden = $("#forwards").hidden = !client;
+  $("#remote-label").hidden = $("#forwards").hidden = $("#guided-peer-fields").hidden = $("#guided-connection").hidden = !client;
+  $("#guided-intro-text").textContent = client
+    ? "فایل اتصال و پورت سرویس را بدهید. پنل بقیهٔ مسیر را برای بازبینی آماده می‌کند."
+    : "نام، کلید، پورت آزاد و تنظیمات شبکه در صورت نیاز خودکار تعیین می‌شوند.";
+  $("#guided-server-overrides").hidden = client;
+  create.elements.server_port.disabled = create.elements.server_key.disabled = client;
+  create.elements.port.required = client;
+  create.elements.port.disabled = create.elements.key.disabled = !client;
+  create.elements.port.placeholder = client ? "از فایل اتصال" : "انتخاب پورت آزاد";
   create.elements.remote.disabled = !client;
   create.elements.remote.required = client;
   create.elements.key.required = client;
   create.elements.key.placeholder = client ? "کلید مشترک سرور" : "برای ساخت خودکار خالی بگذارید";
   $("#forwards").querySelectorAll("input, select").forEach((field) => { field.disabled = !client; });
+  updateQuickForward();
 }
 function addForward() {
   if ($("#forward-rows").children.length >= 24) return;
@@ -716,11 +745,55 @@ function addForward() {
     '<label>پورت مقصد<input data-field="target" dir="ltr" type="number" min="1" max="65535" required></label>' +
     '<label>پروتکل<select data-field="protocol" dir="ltr"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP/UDP</option></select></label>' +
     '<button type="button" class="btn ghost icon" aria-label="حذف قانون">' + icon("trash") + '</button>';
-  row.querySelector("button").onclick = () => { row.remove(); updateCreatePreview(); };
+  row.querySelector("button").onclick = () => {
+    row.remove();
+    updateQuickForward();
+    updateCreatePreview();
+    clearGuidedReview();
+  };
+  if (!$("#forward-rows").children.length && create.elements.service_port.value) {
+    row.querySelector('[data-field="listen"]').value = row.querySelector('[data-field="target"]').value = create.elements.service_port.value;
+  }
   $("#forward-rows").append(row);
+  updateQuickForward();
   updateCreatePreview();
+  clearGuidedReview();
   row.querySelector("input").focus();
 }
+function displayGuidedReview(report) {
+  $("#guided-facts").replaceChildren();
+  for (const [label, value, ltr] of [
+    ["نام تونل", report.name, true], ["شبکهٔ محلی", report.interface + " · " + report.local, true],
+    ["MAC دروازه", report.gateway_mac, true],
+    [report.role === "server" ? "شنود Paqet" : "سرور خارج", report.endpoint, true],
+    ["KCP", report.kcp.mode + " · MTU " + report.kcp.mtu + " · " + report.kcp.block + " · ×" + report.kcp.conn, true],
+    ["اعتبارسنجی", report.native_checked ? "پنل و هستهٔ Paqet" : "پنل", false],
+  ]) {
+    const item = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = value;
+    detail.dir = ltr ? "ltr" : "auto";
+    item.append(term, detail);
+    $("#guided-facts").append(item);
+  }
+  const list = $("#guided-forward-list");
+  list.replaceChildren();
+  for (const text of [...report.forward.map(rule => rule.protocol.toUpperCase() + " · " + rule.listen + " → " + rule.target),
+                       ...report.socks.map(address => "SOCKS5 · " + address)]) {
+    const item = document.createElement("li");
+    item.dir = "ltr";
+    item.textContent = text;
+    list.append(item);
+  }
+  list.hidden = !list.children.length;
+  $("#guided-review").hidden = false;
+  $("#guided-review-title").focus();
+}
+
+create.addEventListener("input", clearGuidedReview);
+$("#guided-connection").addEventListener("invalid", () => { $("#guided-connection").open = true; }, true);
 create.addEventListener("submit", async (event) => {
   event.preventDefault();
   const method = create.elements.method.value;
@@ -734,16 +807,32 @@ create.addEventListener("submit", async (event) => {
   const data = Object.fromEntries(new FormData(create));
   delete data.method;
   delete data["role-pick"];
+  data.guided = true;
+  if (data.role === "server") {
+    data.port = data.server_port || "";
+    data.key = data.server_key || "";
+  }
+  delete data.server_port;
+  delete data.server_key;
   if (peerTransport && data.role === "client") data.transport = peerTransport;
   if (data.role === "client") {
     data.forwards = Array.from($("#forward-rows").children, (row) =>
       Object.fromEntries(Array.from(row.querySelectorAll("[data-field]"), (field) => [field.dataset.field, field.value])));
   }
+  const confirmed = creationReview;
+  const requestedRevision = creationRevision;
   createSaving = true;
   updateCreateMethod();
   showError("#create-error");
   try {
-    const result = await api("tunnels", data);
+    if (!confirmed) {
+      const review = await api("tunnels/preview", data);
+      if (!$("#create-dialog").open || creationRevision !== requestedRevision) return;
+      creationReview = review;
+      displayGuidedReview(review);
+      return;
+    }
+    const result = await api("tunnels", {...data, confirmed});
     $("#create-dialog").close();
     if (result.key) {
       $("#key-value").value = result.key;
@@ -752,6 +841,7 @@ create.addEventListener("submit", async (event) => {
     toast("تونل ایجاد شد.");
     await refresh();
   } catch (error) {
+    if (confirmed) clearGuidedReview();
     showError("#create-error", error.message);
   } finally {
     createSaving = false;
@@ -1073,7 +1163,9 @@ document.querySelectorAll("[data-create]").forEach((button) => {
   button.onclick = () => {
     create.reset();
     peerTransport = undefined;
-    $("#peer-status").textContent = "";
+    peerFileLoading = false;
+    $("#guided-connection").open = false;
+    $("#peer-status").textContent = "فایل را از جزئیات تونل روی سرور خارج دریافت کنید.";
     $("#forward-rows").replaceChildren();
     labelButton($("#copy"), "کپی کلید", "copy");
     showError("#create-error");
@@ -1081,7 +1173,7 @@ document.querySelectorAll("[data-create]").forEach((button) => {
     else if (latestOverview?.region === "foreign") create.elements.role.value = "server";
     else if (["client", "server"].includes(latestOverview?.topology)) create.elements.role.value = latestOverview.topology;
     useRole();
-    updateCreateMethod();
+    clearGuidedReview();
     $("#create-dialog").showModal();
   };
 });
@@ -1144,26 +1236,50 @@ setInterval(() => {
   if (!document.hidden && !$("#workspace").hidden) refresh();
 }, 10000);
 
-let peerTransport;
 $("#peer-file").onchange = async (event) => {
-  peerTransport = undefined;
-  $("#peer-status").textContent = "";
+  const field = event.target;
+  const file = field.files[0];
+  if (peerTransport) {
+    for (const name of ["remote", "port", "key"]) create.elements[name].value = "";
+    create.elements.mode.value = "fast";
+    for (const name of ["mtu", "conn"]) create.elements[name].value = create.elements[name].defaultValue;
+    peerTransport = undefined;
+  }
+  peerFileLoading = Boolean(file);
+  clearGuidedReview();
+  $("#peer-status").textContent = file ? "در حال خواندن فایل…" : "فایل را از جزئیات تونل روی سرور خارج دریافت کنید.";
+  showError("#create-error");
+  if (!file) return;
   try {
-    const file = event.target.files[0];
-    if (!file) return;
     if (file.size > 65536) throw Error("فایل اتصال بزرگ است.");
     const profile = JSON.parse(await file.text());
+    if (field.files[0] !== file) return;
     const kcp = profile.transport?.kcp;
-    if (profile.format !== "paqet-peer-v1" || !kcp?.key) throw Error("فایل اتصال معتبر نیست.");
+    if (profile.format !== "paqet-peer-v1" || profile.transport?.protocol !== "kcp" || typeof kcp?.key !== "string") {
+      throw Error("فایل اتصال معتبر نیست.");
+    }
+    if (typeof profile.address === "string") create.elements.remote.value = profile.address;
     create.elements.port.value = profile.port;
     create.elements.key.value = kcp.key;
     create.elements.mode.value = kcp.mode || "fast";
     create.elements.mtu.value = kcp.mtu || 1350;
     create.elements.conn.value = profile.transport.conn || 1;
     peerTransport = profile.transport;
-    $("#peer-status").textContent = "پارامترهای سرور وارد شد. IPv4 عمومی سرور و ورودی‌های کلاینت را مشخص کنید.";
+    $("#guided-connection").open = false;
+    $("#peer-status").textContent = profile.address
+      ? "IP، پورت و تنظیمات سرور از فایل وارد شد."
+      : "پورت و تنظیمات وارد شد. IPv4 قابل‌دسترسی سرور خارج را وارد کنید.";
     updateCreatePreview();
-  } catch (error) { showError("#create-error", error.message); }
+  } catch (error) {
+    if (field.files[0] !== file) return;
+    $("#peer-status").textContent = "فایل دیگری انتخاب کنید یا مشخصات اتصال را دستی وارد کنید.";
+    showError("#create-error", error.message);
+  } finally {
+    if (field.files[0] === file) {
+      peerFileLoading = false;
+      updateCreateMethod();
+    }
+  }
 };
 $("#export-peer").onclick = async () => {
   try {
@@ -1348,9 +1464,10 @@ function updateRelayForm() {
   }
   const hops = {paqet:primary.value, standby:backup.value, https:peer, quic};
   listen.placeholder = receiver ? (transport.value === "quic" ? "0.0.0.0:24443" : "0.0.0.0:8443") : "127.0.0.1:24105";
+  const destination = /^[0-9]{1,5}$/.test(target.value) ? "127.0.0.1:" + target.value : target.value;
   $("#relay-preview").textContent = receiver
-    ? [domain.value || "دامنهٔ خارج", listen.value || (transport.value === "quic" ? "شنوندهٔ UDP" : "شنوندهٔ TLS"), target.value || "مقصد محلی"].join(" → ")
-    : ["اتصال کاربر", listen.value || "ورودی ایران", hops[route.value] || routeNames[route.value], "سرویس روی خارج"].join(" → ");
+    ? [domain.value || "دامنهٔ خارج", listen.value || listen.placeholder, destination || "مقصد محلی"].join(" → ")
+    : ["اتصال کاربر", listen.value || listen.placeholder, hops[route.value] || routeNames[route.value], "سرویس روی خارج"].join(" → ");
 }
 
 function updateQuicOptions() {
@@ -1378,6 +1495,25 @@ function openRelay(row, {role = "entry", method} = {}) {
     if (row?.[key] !== undefined) relayForm.elements[key].value = socketLabel(row[key]) || relayForm.elements[key].value;
   }
   relayForm.elements.selected.value = row?.configured || method || "paqet";
+  const known = new Map();
+  for (const tunnel of tunnels.filter(tunnel => tunnel.role === "client" && tunnel.state === "active")) {
+    for (const rule of tunnel.forwards) {
+      const match = /^(?:0\.0\.0\.0|127\.0\.0\.1):([0-9]{1,5})$/.exec(rule.listen);
+      if (match && rule.protocol === "tcp") known.set("127.0.0.1:" + match[1], tunnel.name);
+    }
+  }
+  $("#relay-paqet-listeners").replaceChildren(...Array.from(known, ([address, name]) => new Option(name, address)));
+  const automaticPrimary = !row && role === "entry" && relayForm.elements.selected.value === "paqet" && known.size === 1;
+  const primaryHint = $("#relay-primary-hint");
+  primaryHint.hidden = true;
+  if (automaticPrimary) {
+    relayForm.elements.primary.value = known.keys().next().value;
+    primaryHint.textContent = "از تونل فعال روی همین میزبان وارد شد.";
+    primaryHint.hidden = false;
+  } else if (known.size > 1) {
+    primaryHint.textContent = "نشانی تونل موردنظر را از پیشنهادها انتخاب کنید.";
+    primaryHint.hidden = false;
+  }
   relayForm.elements.policy.value = row?.policy || (row?.automatic ? "failover" : "manual");
   relayForm.elements.name.readOnly = Boolean(row);
   relayForm.elements.role.disabled = Boolean(row);
@@ -1401,6 +1537,7 @@ $("#relay-method-back").onclick = () => {
   create.querySelector('[name="method"]:checked').focus();
 };
 relayForm.oninput = updateRelayForm;
+relayForm.elements.primary.addEventListener("input", () => { $("#relay-primary-hint").hidden = true; });
 for (const [selector, kind] of [["#relay-profile", "https"], ["#quic-profile", "quic"]]) {
   $(selector).onchange = async event => {
     let profile;

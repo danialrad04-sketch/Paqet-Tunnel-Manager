@@ -2,9 +2,12 @@
 from copy import deepcopy
 import difflib
 import hashlib
+import ipaddress
 import json
+import os
 import re
 import secrets
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -37,6 +40,103 @@ class Operations:
         self.manager = manager
         self.demo = manager.demo
         self.memory = {}
+
+    def listeners(self):
+        if self.demo:
+            return {"tcp": {self.manager.panel_port: {"0.0.0.0"}}, "udp": {}}
+        sockets = {"tcp": {}, "udp": {}}
+        for line in p.run("ss", "-H", "-lntu").stdout.splitlines():
+            cols = line.split()
+            if len(cols) < 5 or cols[0] not in sockets or ":" not in cols[4]:
+                continue
+            address, port = cols[4].rsplit(":", 1)
+            if port.isdecimal():
+                sockets[cols[0]].setdefault(int(port), set()).add(address.strip("[]"))
+        return sockets
+
+    def guided_defaults(self, data, sockets):
+        role = data.get("role")
+        if role not in ("server", "client"):
+            raise p.Problem("نقش تونل معتبر نیست.")
+        rules = {**data}
+        rows = self.manager.inventory()
+        if not rules.get("name"):
+            names = {row["name"] for row in rows} | set(self.manager.names()) | set(self.manager.archives())
+            rules["name"] = next((f"paqet-{role}-{i:02d}" for i in range(1, 1001)
+                                  if f"paqet-{role}-{i:02d}" not in names), "")
+        if role == "server" and not rules.get("port"):
+            reserved = set(sockets["tcp"]) | {self.manager.panel_port}
+            reserved.update(int(port) for row in rows if row["role"] == "server"
+                            and (port := row["endpoint"].rsplit(":", 1)[-1]).isdecimal())
+            rules["port"] = next((port for port in range(6589, 7589) if port not in reserved), "")
+            if not rules["port"]:
+                raise p.Problem("در بازهٔ پیشنهادی پورت آزاد پیدا نشد. پورت را وارد کنید.")
+        if role == "client" and rules.get("service_port"):
+            forwards = rules.get("forwards", [])
+            if not isinstance(forwards, list):
+                raise p.Problem("فهرست انتقال پورت معتبر نیست.")
+            if not forwards:
+                port = p.number(rules["service_port"], 1, 65535, "پورت سرویس خارج")
+                rules["forwards"] = [{"listen": port, "target": port, "protocol": "tcp"}]
+        return rules
+
+    def review_creation(self, name, port, config, sockets):
+        server = config["role"] == "server"
+        if server and port in sockets["tcp"]:
+            raise p.Problem("پورت انتخاب‌شده روی این میزبان در حال استفاده است.")
+        wildcards = {"", "*", "0.0.0.0", "::"}
+        for group in ("socks5", "forward"):
+            for rule in config.get(group, []):
+                host, local_port = p.endpoint(rule["listen"], True)
+                protocol = rule.get("protocol", "tcp")
+                used = sockets[protocol].get(local_port, set())
+                if used and (host in wildcards or host in used or used & wildcards):
+                    raise p.Problem(f"آدرس شنود {rule['listen']} برای {protocol.upper()} در حال استفاده است.")
+        settings = config["network"]
+        kcp = config["transport"]["kcp"]
+        report = {"name": name, "role": config["role"], "interface": settings["interface"],
+                  "local": settings["ipv4"]["addr"], "gateway_mac": settings["ipv4"]["router_mac"],
+                  "endpoint": config["listen" if server else "server"]["addr"],
+                  "forward": config.get("forward", []),
+                  "socks": [row["listen"] for row in config.get("socks5", [])],
+                  "kcp": {"mode": kcp["mode"], "mtu": kcp["mtu"], "conn": config["transport"]["conn"],
+                          "block": kcp.get("block") or "aes"},
+                  "native_checked": self.native_validation(config)}
+        return report
+
+    def native_validation(self, config):
+        if self.demo or not os.access(p.PROBE_CORE, os.X_OK):
+            return False
+        if p.run(str(p.PROBE_CORE), "check", "--help", required=False).returncode:
+            return False  # The first health build supports only the probe.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".yaml") as out:
+            yaml.safe_dump(config, out)
+            out.flush()
+            result = p.run(str(p.PROBE_CORE), "check", "-c", out.name, required=False)
+        try:
+            accepted = not result.returncode and json.loads(result.stdout) == {"schema": "paqet-config-check-v1", "ok": True}
+        except ValueError:
+            accepted = False
+        if not accepted:
+            raise p.Problem("هستهٔ Paqet این تنظیمات را نپذیرفت. فیلدهای شبکه یا KCP را بررسی کنید.")
+        return True
+
+    def peer_profile(self, name, access_host):
+        config = self.manager.parse_configuration(self.manager.full_config(name)["yaml"])
+        if config.get("role") != "server":
+            raise p.Problem("فایل اتصال از تونل سرور صادر می‌شود.")
+        port = str(p.mapping(config.get("listen")).get("addr", "")).rsplit(":", 1)[-1]
+        profile = {"format": "paqet-peer-v1", "port": port, "transport": config.get("transport")}
+        network = p.mapping(p.mapping(config.get("network")).get("ipv4"))
+        for candidate, source in ((network.get("addr", ""), "network"), (access_host, "panel")):
+            try:
+                ip = ipaddress.IPv4Address(str(candidate).rsplit(":", 1)[0])
+            except ValueError:
+                continue
+            if ip.is_global and not ip.is_multicast:
+                profile.update(address=str(ip), address_source=source)
+                break
+        return profile
 
     def history(self, name):
         if self.demo:
