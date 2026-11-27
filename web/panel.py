@@ -1033,7 +1033,7 @@ class Panel(BaseHTTPRequestHandler):
                                cache="public, max-age=2592000, immutable")
             elif method == "GET" and path == "/api/session":
                 self.answer(200, {"authenticated": self.authenticated(), "demo": manager.demo,
-                                  "features": {"receiver_acme": True}})
+                                  "features": {"receiver_acme": True, "self_update": True}})
             elif method == "POST" and path == "/api/login":
                 self.login()
             elif path.startswith("/api/") and not self.authenticated():
@@ -1041,6 +1041,17 @@ class Panel(BaseHTTPRequestHandler):
             elif method == "POST" and path == "/api/logout":
                 self.server.sessions.pop(self.session(), None)
                 self.answer(200, {}, "paqet_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
+            elif method == "GET" and path == "/api/updates":
+                self.answer(200, self.server.updates.view())
+            elif method == "POST" and path == "/api/updates":
+                data = self.payload()
+                if data.get("action") == "check":
+                    self.server.updates.start_check()
+                elif data.get("action") == "apply":
+                    self.server.updates.apply(data.get("revision"))
+                else:
+                    raise Problem("عملیات به‌روزرسانی معتبر نیست.")
+                self.answer(202, self.server.updates.view())
             elif method == "GET" and path == "/api/overview":
                 self.answer(200, {**manager.health(), "quic": bool(self.server.relay.quic) or manager.demo})
             elif method == "GET" and path == "/api/relays":
@@ -1190,6 +1201,7 @@ class LocalServer(HTTPServer):
 def main():
     sys.modules.setdefault("panel", sys.modules[__name__])
     from relay import Relay
+    from updates import Updates
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--demo", action="store_true")
@@ -1210,6 +1222,7 @@ def main():
         port = server.server_port
         server.manager = Manager(options.demo, port)
         server.relay = Relay(STATE, options.demo, port)
+        server.updates = Updates(STATE, options.demo)
         server.token_hash = hashlib.sha256(token.encode()).digest()
         server.sessions, server.attempts = {}, []
         print(f"Listening on {bind}:{port}", flush=True)

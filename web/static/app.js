@@ -33,11 +33,45 @@ const icons = {
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
   trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   arrow: '<path d="M15 6l-6 6 6 6"/>',
+  "arrow-right": '<path d="M4 12h15m-6-6 6 6-6 6"/>',
+  download: '<path d="M12 3v12m-4-4 4 4 4-4M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  github: '<path d="M9 18c-4 .8-4-2-6-2m12 5v-3.9c0-1 .1-1.7-.5-2.4 2.4-.3 4.9-1.2 4.9-5.4a4.2 4.2 0 0 0-1.1-3 4 4 0 0 0-.1-3s-.8-.3-3.1 1.2a11.5 11.5 0 0 0-6.2 0C6.6 3 5.8 3.3 5.8 3.3a4 4 0 0 0-.1 3 4.2 4.2 0 0 0-1.1 3c0 4.2 2.5 5.1 4.9 5.4-.6.7-.5 1.4-.5 2.4V21"/>',
+  history: '<path d="M3 11a9 9 0 1 1 2.4 6M3 4v7h7m2-4v5l3 2"/>',
+  book: '<path d="M12 7a5 5 0 0 0-4-2H3v14h5a5 5 0 0 1 4 2m0-14a5 5 0 0 1 4-2h5v14h-5a5 5 0 0 0-4 2V7"/>',
+  file: '<path d="M5 3h9l5 5v13H5zM14 3v5h5M8 13h8m-8 4h8"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  save: '<path d="M4 4h13l3 3v13H4zM8 4v6h8V4M8 20v-6h8v6"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
 };
 function icon(name) {
   return '<svg viewBox="0 0 24 24" aria-hidden="true">' + icons[name] + '</svg>';
 }
 document.querySelectorAll("[data-icon]").forEach((el) => { el.innerHTML = icon(el.dataset.icon); });
+
+function iconElement(name, className = "") {
+  const marker = document.createElement("span");
+  marker.dataset.icon = name;
+  marker.className = className;
+  marker.innerHTML = icon(name);
+  return marker;
+}
+
+for (const dialog of document.querySelectorAll("[data-dialog-icon]")) {
+  const title = dialog.querySelector("h2");
+  if (title) {
+    const badge = iconElement(dialog.dataset.dialogIcon, "dialog-title-icon");
+    const content = title.parentElement.parentElement.classList.contains("modal-head") ? title.parentElement : title;
+    const heading = document.createElement("div");
+    heading.className = "dialog-heading";
+    content.replaceWith(heading);
+    heading.append(badge, content);
+  }
+}
+
+function labelButton(button, text, glyph) {
+  button.replaceChildren(iconElement(glyph), document.createTextNode(text));
+}
+
 
 /* Theme: per-browser preference, falls back to the system setting. */
 function storedTheme() {
@@ -79,7 +113,7 @@ $("#menu-close").onclick = $("#scrim").onclick = () => setMenu(false);
 function confirmAction(text, {ok = "ادامه", danger = false} = {}) {
   const dialog = $("#confirm-dialog");
   $("#confirm-text").textContent = text;
-  $("#confirm-ok").textContent = ok;
+  labelButton($("#confirm-ok"), ok, danger ? "alert" : "check");
   $("#confirm-ok").className = "btn " + (danger ? "destructive" : "primary");
   return new Promise((resolve) => {
     const finish = (value) => {
@@ -98,7 +132,7 @@ function confirmAction(text, {ok = "ادامه", danger = false} = {}) {
 const states = {active:"فعال", inactive:"متوقف", failed:"ناموفق", activating:"در حال شروع",
   deactivating:"در حال توقف", reloading:"در حال بارگذاری", unregistered:"بدون سرویس"};
 const roles = {server:"سرور", client:"کلاینت"};
-const pages = {overview:"نمای کلی", tunnels:"تونل‌ها", relays:"مسیرها و پایش", host:"میزبان", servers:"سرورها و آرشیو"};
+const pages = {overview:"نمای کلی", tunnels:"تونل‌ها", relays:"مسیرها و پایش", host:"میزبان", servers:"سرورها و آرشیو", updates:"به‌روزرسانی پنل"};
 const digits = new Intl.NumberFormat("fa-IR");
 let tunnels = [];
 let selected;
@@ -137,6 +171,7 @@ function showWorkspace(demo) {
   $("#workspace").hidden = false;
   $("#demo").hidden = !demo;
   $("#logout").hidden = demo;
+  if (location.hash === "#updates") selectPage("updates");
 }
 function cell(row, value, tag = "span") {
   const element = document.createElement(tag);
@@ -458,6 +493,9 @@ async function refresh() {
 }
 function selectPage(page) {
   currentPage = page;
+  if (page === "updates" || location.hash === "#updates") {
+    window.history.replaceState(null, "", page === "updates" ? "#updates" : location.pathname + location.search);
+  }
   setMenu(false);
   window.scrollTo({top: 0});
   for (const item of document.querySelectorAll("[data-page]")) {
@@ -471,6 +509,8 @@ function selectPage(page) {
   $("#relays").hidden = page !== "relays";
   if (page === "relays") loadRelays();
   $("#servers").hidden = page !== "servers";
+  $("#updates").hidden = page !== "updates";
+  if (page === "updates") loadUpdates();
   $("#tunnels").hidden = !["overview", "tunnels"].includes(page);
   if (page === "host") loadReport();
   if (page === "servers") { loadHosts(); loadArchives(); }
@@ -634,7 +674,7 @@ function updateCreateMethod() {
   const unavailable = method === "quic" && quicAvailable !== true;
   const fields = $("#paqet-create-fields");
   fields.hidden = fields.disabled = !paqet;
-  createSubmit.textContent = paqet ? "ساخت و راه‌اندازی" : "ادامهٔ تنظیم " + routeNames[method];
+  labelButton(createSubmit, paqet ? "ساخت و راه‌اندازی" : "ادامهٔ تنظیم " + routeNames[method], paqet ? "play" : "arrow");
   createSubmit.disabled = createSaving || unavailable;
   const status = $("#create-quic-status");
   status.hidden = !unavailable;
@@ -984,7 +1024,7 @@ $("#key-dialog").addEventListener("close", () => { $("#key-value").value = ""; }
 $("#copy").onclick = async () => {
   try {
     await navigator.clipboard.writeText($("#key-value").value);
-    $("#copy").textContent = "کپی شد ✓";
+    labelButton($("#copy"), "کپی شد", "check");
     toast("کلید در کلیپ‌بورد کپی شد.");
   } catch {
     $("#key-value").select();
@@ -999,7 +1039,7 @@ document.querySelectorAll("[data-create]").forEach((button) => {
     peerTransport = undefined;
     $("#peer-status").textContent = "";
     $("#forward-rows").replaceChildren();
-    $("#copy").textContent = "کپی کلید";
+    labelButton($("#copy"), "کپی کلید", "copy");
     showError("#create-error");
     if (latestOverview?.region === "ir") create.elements.role.value = "client";
     else if (latestOverview?.region === "foreign") create.elements.role.value = "server";
@@ -1649,7 +1689,7 @@ function openRecovery(name) {
   $("#recovery-file-label").hidden = $("#recovery-name-label").hidden = Boolean(name);
   recoveryForm.elements.bundle.required = !name;
   recoveryForm.elements.name.disabled = Boolean(name);
-  $("#recovery-submit").textContent = name ? "دریافت فایل رمزگذاری‌شده" : "پیش‌بررسی روی این میزبان";
+  labelButton($("#recovery-submit"), name ? "دریافت فایل رمزگذاری‌شده" : "پیش‌بررسی روی این میزبان", name ? "download" : "radar");
   recoveryDialog.showModal();
 }
 
@@ -1731,3 +1771,173 @@ $("#recovery-apply").onclick = async () => {
 recoveryDialog.addEventListener("cancel", event => {
   if ($("#recovery-submit").disabled) event.preventDefault();
 });
+
+const updateCheck = $("#check-updates");
+const updateApply = $("#apply-update");
+const pendingUpdateKey = "paqet-pending-update";
+let updateModel;
+let updateLoading = false;
+let updateSubmitting = false;
+let displayedChanges = "";
+
+const pullPhases = {
+  queued:"نصب در صف اجراست.",
+  download:"نسخهٔ تأییدشده از GitHub دریافت و بررسی می‌شود.",
+  install:"نصب نسخه و بررسی پاسخ پنل در حال انجام است.",
+  rollback:"بازیابی فایل‌های نسخهٔ قبلی در حال انجام است.",
+  complete:"نسخهٔ جدید نصب شد.",
+  download_failed:"دانلود نسخه ناموفق بود. دسترسی سرور به GitHub را بررسی کنید.",
+  backup_failed:"تهیهٔ نسخهٔ پشتیبان از فایل‌های پنل ناموفق بود.",
+  schedule:"سرویس نصب شروع نشد.",
+  busy:"نصب دیگری روی همین سرور در حال اجراست.",
+  changed:"نسخهٔ محلی یا شاخهٔ GitHub تغییر کرد. دوباره بررسی کنید.",
+  diverged:"شاخهٔ GitHub نسخهٔ نصب‌شده را در تاریخچهٔ خود ندارد.",
+  rolled_back:"نصب ناموفق بود و پاسخ رابط نسخهٔ قبلی پس از بازیابی تأیید شد.",
+  rollback_failed:"نصب ناموفق بود و پاسخ پنل پس از بازیابی تأیید نشد. گزارش systemd را بررسی کنید.",
+  interrupted:"فرایند نصب متوقف شده است. گزارش systemd را بررسی کنید.",
+};
+
+function shortVersion(element, sha, empty) {
+  element.textContent = sha ? sha.slice(0, 12) : empty;
+  element.title = sha || "";
+  element.classList.toggle("version-sha", Boolean(sha));
+}
+
+function renderChanges(model) {
+  const {check, repo} = model;
+  const repository = "https://github.com/" + repo;
+  $("#update-source").href = repository;
+  $("#update-source").hidden = false;
+  if (check.status === "checking" || check.status === "idle") {
+    $("#update-changes-note").textContent = "تغییرات پس از بررسی GitHub نمایش داده می‌شوند.";
+  } else if (check.status === "current") {
+    $("#update-changes-note").textContent = "آخرین تغییرات نسخهٔ نصب‌شده";
+  } else if (check.status === "error") {
+    $("#update-changes-note").textContent = "برای دریافت فهرست تغییرات دوباره بررسی کنید.";
+  } else {
+    $("#update-changes-note").textContent = check.limited || !check.base ?
+      "آخرین تغییرات در شاخهٔ main" : "تغییرات جدید پس از نسخهٔ نصب‌شده";
+  }
+  const changes = check.changes || [];
+  const next = JSON.stringify(changes);
+  if (displayedChanges === next) return;
+  displayedChanges = next;
+  const rows = changes.map(change => {
+    const row = document.createElement("li");
+    const title = document.createElement("strong");
+    title.dir = "auto";
+    title.textContent = change.title;
+    const meta = document.createElement("div");
+    meta.className = "update-change-meta";
+    const time = document.createElement("time");
+    time.dateTime = change.date;
+    time.textContent = new Date(change.date).toLocaleDateString("fa-IR");
+    const revisionLink = document.createElement("a");
+    revisionLink.href = repository + "/commit/" + change.sha;
+    revisionLink.target = "_blank";
+    revisionLink.rel = "noopener noreferrer";
+    revisionLink.dir = "ltr";
+    revisionLink.textContent = change.sha.slice(0, 7);
+    meta.append(time, revisionLink);
+    row.append(title, meta);
+    if (change.body) {
+      const details = document.createElement("details");
+      const label = document.createElement("summary");
+      label.textContent = "جزئیات تغییر";
+      const text = document.createElement("p");
+      text.dir = "auto";
+      text.textContent = change.body;
+      details.append(label, text);
+      row.append(details);
+    }
+    return row;
+  });
+  $("#update-changes").replaceChildren(...rows);
+}
+
+function renderUpdates(model) {
+  updateModel = model;
+  const {installed, check, installation, demo} = model;
+  const checking = check.status === "checking";
+  const running = installation.status === "running";
+  const available = check.status === "available" && check.latest !== installed && check.base === installed;
+  updateCheck.disabled = checking || running || updateSubmitting;
+  updateApply.hidden = !available || demo;
+  updateApply.disabled = checking || running || updateSubmitting;
+  updateCheck.classList.toggle("working", checking);
+  updateApply.classList.toggle("working", running);
+  shortVersion($("#update-installed"), installed, "ثبت نشده");
+  shortVersion($("#update-latest"), check.latest || (installation.status === "done" ? installed : null), "—");
+  $("#update-checked").textContent = check.checked ? new Date(check.checked * 1000).toLocaleString("fa-IR") : "—";
+  const message = $("#update-status");
+  const recentInstallError = installation.status === "error" &&
+    (check.status === "idle" || installation.time >= check.checked);
+  message.classList.toggle("failed", check.status === "error" || recentInstallError);
+  if (running || installation.status === "done" && check.status === "idle" || recentInstallError) {
+    message.textContent = pullPhases[installation.phase] || "وضعیت نصب را دوباره بررسی کنید.";
+  } else if (checking) {
+    message.textContent = "در حال خواندن آخرین نسخه و تغییرات از GitHub…";
+  } else if (check.status === "error") {
+    message.textContent = check.error;
+  } else if (available) {
+    message.textContent = demo ? "نسخهٔ جدید در GitHub موجود است. نصب در حالت نمایشی غیرفعال است." : "نسخهٔ جدید آمادهٔ نصب است.";
+  } else if (check.status === "current") {
+    message.textContent = "پنل به‌روز است.";
+  } else {
+    message.textContent = "برای دیدن نسخه‌ها، به‌روزرسانی را بررسی کنید.";
+  }
+  renderChanges(model);
+  try {
+    const pending = sessionStorage.getItem(pendingUpdateKey);
+    if (pending && pending === installation.revision && installation.status !== "running") {
+      sessionStorage.removeItem(pendingUpdateKey);
+      if (installation.status === "done" && pending === installed) location.reload();
+      else if (installation.status === "error") {
+        showError("#update-error", (pullPhases[installation.phase] || "نصب نسخه ناموفق بود.") +
+          " گزارش سرور در journalctl -u paqet-panel-update.service ثبت شده است.");
+      }
+    }
+  } catch { /* status is still available without browser storage */ }
+}
+
+async function loadUpdates() {
+  if (updateLoading || updateSubmitting || $("#updates").hidden || $("#workspace").hidden) return;
+  updateLoading = true;
+  try { renderUpdates(await api("updates")); }
+  catch (error) {
+    if (updateModel?.installation.status !== "running") showError("#update-error", error.message);
+  } finally { updateLoading = false; }
+}
+
+updateCheck.onclick = async () => {
+  updateSubmitting = true;
+  updateCheck.disabled = updateApply.disabled = true;
+  showError("#update-error");
+  try { updateModel = await api("updates", {action:"check"}); }
+  catch (error) { showError("#update-error", error.message); }
+  finally {
+    updateSubmitting = false;
+    if (updateModel) renderUpdates(updateModel);
+    else updateCheck.disabled = false;
+  }
+};
+
+updateApply.onclick = async () => {
+  const sha = updateModel?.check.latest;
+  if (!sha || updateSubmitting || !await confirmAction(
+    "پنل برای نصب نسخهٔ جدید دوباره راه‌اندازی می‌شود. اتصال‌های مدیریت‌شده در پنل ممکن است قطع شوند و برای دیدن نتیجه باید دوباره وارد شوید.",
+    {ok:"نصب نسخه"})) return;
+  updateSubmitting = true;
+  updateCheck.disabled = updateApply.disabled = true;
+  showError("#update-error");
+  try {
+    updateModel = await api("updates", {action:"apply", revision:sha});
+    try { sessionStorage.setItem(pendingUpdateKey, sha); } catch { /* browser storage disabled */ }
+  } catch (error) { showError("#update-error", error.message); }
+  finally {
+    updateSubmitting = false;
+    if (updateModel) renderUpdates(updateModel);
+  }
+};
+
+setInterval(() => { if (!document.hidden) loadUpdates(); }, 3000);

@@ -39,6 +39,10 @@ done
 [[ $EUID == 0 ]] || { echo 'Run the installer with sudo.' >&2; exit 1; }
 [[ -d /run/systemd/system && -x /usr/bin/apt-get ]] ||
     { echo 'This installer requires Debian/Ubuntu with systemd.' >&2; exit 1; }
+if [[ ${PAQET_INSTALL_LOCK_HELD:-0} != 1 ]]; then
+    exec 9>/run/lock/paqet-panel-install.lock
+    flock -n 9 || { echo 'A Paqet Panel installation is already running.' >&2; exit 1; }
+fi
 if [[ -n $url || -n $core ]]; then
     [[ $checksum =~ ^[a-fA-F0-9]{64}$ ]] ||
         { echo 'Provide the expected SHA-256 for the selected core.' >&2; exit 2; }
@@ -61,7 +65,7 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
     { echo 'Missing panel files. Use bootstrap-web.sh for installation from GitHub.' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 /usr/bin/apt-get update
-/usr/bin/apt-get install -y python3 python3-yaml python3-cryptography libpcap-dev iptables iproute2 iputils-ping curl ca-certificates certbot
+/usr/bin/apt-get install -y python3 python3-yaml python3-cryptography libpcap-dev iptables iproute2 iputils-ping curl ca-certificates certbot git
 staging=$(mktemp -d)
 trap 'rm -rf -- "$staging"' EXIT
 
@@ -129,8 +133,8 @@ if [[ -x $quic_python ]]; then
     fi
     panel_python=$quic_python
 fi
-install -m 0644 "$source_dir"/web/{panel,relay,operations,recovery,quic_transport,acme}.py /opt/paqet-panel/
-install -m 0755 "$source_dir/web/packet-rules.sh" /opt/paqet-panel/packet-rules.sh
+install -m 0644 "$source_dir"/web/{panel,relay,operations,recovery,quic_transport,acme,updates}.py /opt/paqet-panel/
+install -m 0755 "$source_dir"/web/{packet-rules,update-panel}.sh /opt/paqet-panel/
 install -m 0644 "$source_dir"/web/static/*.html "$source_dir"/web/static/*.css "$source_dir"/web/static/*.js /opt/paqet-panel/static/
 install -m 0644 "$source_dir"/web/static/fonts/* /opt/paqet-panel/static/fonts/
 if [[ ! -e /etc/paqet-panel/token ]]; then
@@ -169,7 +173,7 @@ systemctl is-active --quiet paqetpanel.service
 ready=
 for attempt in {1..10}; do
     if curl --noproxy '*' -fsS --max-time 2 http://127.0.0.1:8765/api/session 2>/dev/null |
-        /usr/bin/python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(not (s.get("demo") is False and s.get("authenticated") is False and s.get("features", {}).get("receiver_acme") is True))' 2>/dev/null &&
+        /usr/bin/python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(not (s.get("demo") is False and s.get("authenticated") is False and s.get("features", {}).get("self_update") is True))' 2>/dev/null &&
         curl --noproxy '*' -fsS --max-time 2 -o "$staging/served.html" http://127.0.0.1:8765/ 2>/dev/null &&
         curl --noproxy '*' -fsS --max-time 2 -o "$staging/served.js" http://127.0.0.1:8765/app.js 2>/dev/null &&
         cmp -s "$staging/served.html" "$source_dir/web/static/index.html" &&
@@ -183,6 +187,15 @@ if [[ -z $ready ]]; then
     echo 'The latest panel API or interface is not being served on port 8765. See journalctl -u paqetpanel.service -n 30.' >&2
     exit 1
 fi
+release_revision=$(git -C "$source_dir" -c safe.directory="$source_dir" rev-parse --verify HEAD 2>/dev/null || true)
+if [[ $release_revision =~ ^[a-f0-9]{40}$ ]]; then
+    revision_file=$(mktemp /etc/paqet-panel/.revision.XXXXXX)
+    printf '%s\n' "$release_revision" > "$revision_file"
+    mv -f -- "$revision_file" /etc/paqet-panel/revision
+else
+    rm -f -- /etc/paqet-panel/revision
+fi
+
 if [[ -f /etc/paqet-panel/http.env ]] &&
         grep -Fxq 'PAQET_HTTP_BIND=0.0.0.0' /etc/paqet-panel/http.env; then
     panel_address=$(ip -4 -o address show scope global | awk 'NR == 1 {split($4,a,"/"); print a[1]}')

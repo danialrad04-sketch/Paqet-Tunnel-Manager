@@ -7,8 +7,8 @@
 <meta name="theme-color" content="#09090b">
 <title>Paqet · میز کار</title>
 <link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=tunnel-method">
-<script src="/app.js?v=tunnel-method" defer></script>
+<link rel="stylesheet" href="/styles.css?v=updates-dialogs">
+<script src="/app.js?v=updates-dialogs" defer></script>
 </head>
 <body>
 
@@ -43,6 +43,7 @@
       <button data-page="relays"><span data-icon="radar"></span>مسیرها و پایش</button>
       <button data-page="host"><span data-icon="server"></span>میزبان</button>
       <button data-page="servers"><span data-icon="archive"></span>سرورها و آرشیو</button>
+      <button data-page="updates"><span data-icon="download"></span>به‌روزرسانی پنل</button>
     </nav>
     <div class="sidebar-bottom">
       <div class="host-tile">
@@ -218,6 +219,29 @@
         <div id="relay-list" class="relay-list"></div>
       </section>
 
+      <section id="updates" class="page" hidden>
+        <div class="page-head">
+          <div><h1>به‌روزرسانی پنل</h1><p class="muted">بررسی و نصب مستقیم از شاخهٔ <bdi>main</bdi> در GitHub</p></div>
+          <div class="inventory-actions">
+            <button id="check-updates" class="btn outline" type="button"><span data-icon="refresh"></span>بررسی به‌روزرسانی</button>
+            <button id="apply-update" class="btn primary" type="button" hidden><span data-icon="download"></span>نصب نسخهٔ جدید</button>
+          </div>
+        </div>
+        <article class="card">
+          <dl class="update-versions card-body">
+            <div><dt>نسخهٔ نصب‌شده</dt><dd id="update-installed" dir="auto">—</dd></div>
+            <div><dt>آخرین نسخه در GitHub</dt><dd id="update-latest" dir="auto">—</dd></div>
+            <div><dt>آخرین بررسی</dt><dd id="update-checked">—</dd></div>
+          </dl>
+          <p id="update-status" class="update-status card-body" role="status">برای دیدن نسخه‌ها، به‌روزرسانی را بررسی کنید.</p>
+        </article>
+        <p id="update-error" class="error banner" role="alert" hidden></p>
+        <article class="card">
+          <div class="card-head"><div><h2>تغییرات نسخه</h2><p id="update-changes-note" class="muted">تغییرات پس از بررسی GitHub نمایش داده می‌شوند.</p></div><a id="update-source" class="btn ghost sm" target="_blank" rel="noopener noreferrer" hidden><span data-icon="github"></span>مخزن</a></div>
+          <ol id="update-changes" class="update-changes"></ol>
+        </article>
+      </section>
+
       <!-- Servers page -->
       <section id="servers" class="page" hidden>
         <div class="page-head"><div><h1>سرورها و آرشیو</h1><p class="muted">دفتر پنل‌های دیگر و تونل‌های حذف‌شدهٔ قابل بازیابی</p></div></div>
@@ -244,7 +268,7 @@
 </div>
 
 <!-- ───────────── Create dialog ───────────── -->
-<dialog id="guide-dialog" aria-labelledby="guide-title">
+<dialog id="guide-dialog" data-dialog-icon="book" aria-labelledby="guide-title">
   <div class="modal-head"><h2 id="guide-title">راه‌اندازی ایران و خارج</h2><button class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
   <ol class="modal-body guide-steps">
     <li><b>نصب روی هر دو میزبان</b><p>نصب‌کنندهٔ main را با گزینهٔ public-http اجرا کنید و آدرس چاپ‌شده در پایان نصب را باز کنید. از «میزبان» موقعیت هر سرور را ثبت کنید.</p></li>
@@ -254,7 +278,7 @@
     <li><b>بررسی مسیر و عبور داده</b><p>در جزئیات کلاینت وضعیت سرویس و مسیر IPv4 را بررسی کنید. اگر مقصد TLS دارد، آزمون پاسخ TLS را اجرا کنید. برای سایر پروتکل‌ها یک درخواست با برنامهٔ واقعی از ورودی ایران بفرستید. هنگام خطای Message too large، مقدار MTU هر دو سمت را بررسی کنید.</p></li>
   </ol>
 </dialog>
-<dialog id="create-dialog" aria-labelledby="create-title">
+<dialog id="create-dialog" data-dialog-icon="route" aria-labelledby="create-title">
   <form id="create-form">
     <div class="modal-head"><div><h2 id="create-title">ساخت تونل</h2><p class="muted">پیکربندی و فعال‌سازی سرویس روی همین میزبان</p></div><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body">
@@ -308,7 +332,7 @@
 </dialog>
 
 <!-- ───────────── Batch dialog ───────────── -->
-<dialog id="batch-dialog" aria-labelledby="batch-title">
+<dialog id="batch-dialog" data-dialog-icon="layers" aria-labelledby="batch-title">
   <form id="batch-form">
     <div class="modal-head"><div><h2 id="batch-title">راه‌اندازی گروهی</h2><p class="muted">ساخت چند تونل روی همین میزبان از فایل JSON</p></div><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body">
@@ -317,7 +341,7 @@
       <p id="batch-error" class="error banner" role="alert" hidden></p>
       <pre id="batch-result" dir="auto" aria-live="polite" hidden></pre>
     </div>
-    <div class="modal-foot"><button type="button" class="btn ghost" data-close>بستن</button><button class="btn primary" type="submit">راه‌اندازی تونل‌ها</button></div>
+    <div class="modal-foot"><button type="button" class="btn ghost" data-close>بستن</button><button class="btn primary" type="submit"><span data-icon="play"></span>راه‌اندازی تونل‌ها</button></div>
   </form>
 </dialog>
 
@@ -328,12 +352,12 @@
     <button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button>
   </div>
   <div class="modal-body">
-    <div class="inventory-actions"><button class="btn outline" id="edit-config">ویرایش کامل YAML</button><button class="btn outline" id="edit-forward">ویرایش انتقال پورت</button><button class="btn outline" id="export-peer">دریافت فایل اتصال کلاینت</button></div>
+    <div class="inventory-actions"><button class="btn outline" id="edit-config"><span data-icon="code"></span>ویرایش کامل YAML</button><button class="btn outline" id="edit-forward"><span data-icon="arrow-right"></span>ویرایش انتقال پورت</button><button class="btn outline" id="export-peer"><span data-icon="download"></span>دریافت فایل اتصال کلاینت</button></div>
     <div class="inventory-actions">
-      <button class="btn outline" id="config-history">تاریخچه و بازیابی</button>
-      <button class="btn outline" id="config-rotation">ساخت جفت با کلید تازه</button>
-      <button class="btn outline" id="export-recovery">دریافت فایل بازیابی</button>
-      <button class="btn outline" id="share-diagnostic">گزارش قابل‌اشتراک</button>
+      <button class="btn outline" id="config-history"><span data-icon="history"></span>تاریخچه و بازیابی</button>
+      <button class="btn outline" id="config-rotation"><span data-icon="key"></span>ساخت جفت با کلید تازه</button>
+      <button class="btn outline" id="export-recovery"><span data-icon="download"></span>دریافت فایل بازیابی</button>
+      <button class="btn outline" id="share-diagnostic"><span data-icon="file"></span>گزارش قابل‌اشتراک</button>
     </div>
     <div class="service-actions">
       <button class="btn outline sm" data-action="start"><span data-icon="play"></span>شروع</button>
@@ -360,7 +384,7 @@
         </div></details>
         <details class="advanced"><summary>پارامترهای دستی KCP، بافر و FEC<span class="summary-chevron" data-icon="chevron-down"></span></summary><div class="form-grid" id="advanced-kcp"></div></details>
         <p class="muted hint">اعمال تنظیمات، سرویس فعال را راه‌اندازی مجدد می‌کند.</p>
-        <button class="btn primary sm" type="submit">ذخیرهٔ تنظیمات</button>
+        <button class="btn primary sm" type="submit"><span data-icon="check"></span>ذخیرهٔ تنظیمات</button>
       </form>
     </details>
     <div class="tool-row">
@@ -385,30 +409,30 @@
       <form id="archive-form">
         <p class="muted">سرویس متوقف می‌شود و فایل‌هایش از فهرست فعال کنار می‌روند. از بخش آرشیو قابل بازیابی است.</p>
         <label class="field">برای تأیید، نام دقیق تونل را بنویسید<input name="confirmation" required dir="ltr" autocomplete="off"></label>
-        <button class="btn destructive sm" type="submit">حذف و آرشیو تونل</button>
+        <button class="btn destructive sm" type="submit"><span data-icon="archive"></span>حذف و آرشیو تونل</button>
       </form>
     </details>
   </div>
 </dialog>
-<dialog id="forward-dialog" aria-label="ویرایش انتقال پورت"><form id="forward-form"><div class="modal-head"><h2>قوانین انتقال کلاینت</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div><div class="modal-body">
+<dialog id="forward-dialog" data-dialog-icon="arrow-right" aria-label="ویرایش انتقال پورت"><form id="forward-form"><div class="modal-head"><h2>قوانین انتقال کلاینت</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div><div class="modal-body">
        <div id="edit-forward-rows"></div><p id="edit-route-preview" class="route-flow" dir="ltr" aria-live="polite" hidden></p><button type="button" id="new-forward-rule" class="btn outline">افزودن قانون</button><p class="error" id="forward-error" hidden role="alert"></p></div>
-       <div class="modal-foot"><button type="submit" class="btn primary">اعمال قوانین</button></div></form></dialog>
-<dialog id="yaml-dialog" aria-labelledby="yaml-title">
+       <div class="modal-foot"><button type="submit" class="btn primary"><span data-icon="check"></span>اعمال قوانین</button></div></form></dialog>
+<dialog id="yaml-dialog" data-dialog-icon="code" aria-labelledby="yaml-title">
   <form id="yaml-form">
-    <div class="modal-head"><h2 id="yaml-title">پیکربندی کامل Paqet</h2><button type="button" data-close class="btn ghost icon" aria-label="بستن">×</button></div>
+    <div class="modal-head"><h2 id="yaml-title">پیکربندی کامل Paqet</h2><button type="button" data-close class="btn ghost icon" aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body"><label class="field">نام سرویس<input name="name" required dir="ltr"></label>
       <label class="field">تنظیمات YAML<textarea name="yaml" dir="ltr" spellcheck="false" required rows="18"></textarea></label>
       <p class="muted">کلید و رمزها در این فایل هستند. ذخیرهٔ ویرایش، سرویس فعال را دوباره راه‌اندازی می‌کند.</p>
       <label class="field" id="yaml-group-label">شناسهٔ عملیات دوطرفه (اختیاری)<input name="group" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,47}" dir="ltr"></label>
       <pre class="terminal" id="yaml-diff" dir="ltr" hidden></pre>
       <p class="error" id="yaml-error" hidden role="alert"></p></div>
-    <div class="modal-foot"><button class="btn primary" type="submit">ذخیره و اعمال</button><button type="button" id="preview-yaml" class="btn outline">پیش‌نمایش تغییرات</button><button type="button" data-close class="btn outline">انصراف</button></div>
+    <div class="modal-foot"><button class="btn primary" type="submit"><span data-icon="save"></span>ذخیره و اعمال</button><button type="button" id="preview-yaml" class="btn outline"><span data-icon="search"></span>پیش‌نمایش تغییرات</button><button type="button" data-close class="btn outline">انصراف</button></div>
   </form>
 </dialog>
 
-<dialog id="relay-dialog" aria-labelledby="relay-title">
+<dialog id="relay-dialog" data-dialog-icon="network" aria-labelledby="relay-title">
   <form id="relay-form">
-    <div class="modal-head"><h2 id="relay-title">تنظیم مسیر TCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+    <div class="modal-head"><h2 id="relay-title">تنظیم مسیر TCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body form-grid">
       <label class="field">نام مسیر<input name="name" dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,47}" required></label>
       <label class="field">نقش<select name="role"><option value="entry">ورودی سمت ایران</option><option value="receiver">گیرنده سمت خارج</option></select></label>
@@ -435,15 +459,15 @@
       <p class="muted wide route-flow" id="relay-preview" dir="auto"></p>
       <p class="error wide" id="relay-form-error" role="alert" hidden></p>
     </div>
-    <div class="modal-foot"><button class="btn outline" type="button" id="relay-method-back" hidden>بازگشت به انتخاب روش</button><button class="btn primary" type="submit">ذخیره و راه‌اندازی</button></div>
+    <div class="modal-foot"><button class="btn outline" type="button" id="relay-method-back" hidden>بازگشت به انتخاب روش</button><button class="btn primary" type="submit"><span data-icon="play"></span>ذخیره و راه‌اندازی</button></div>
   </form>
 </dialog>
 
-<dialog id="history-dialog" aria-labelledby="history-title">
-  <div class="modal-head"><h2 id="history-title">تاریخچهٔ پیکربندی</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+<dialog id="history-dialog" data-dialog-icon="history" aria-labelledby="history-title">
+  <div class="modal-head"><h2 id="history-title">تاریخچهٔ پیکربندی</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
   <div class="modal-body">
     <p class="muted">برای بازیابی یک تغییر دوطرفه، پیش از تغییر روی هر دو پنل با شناسهٔ مشترک نقطه ثبت کنید. وضعیت و بازگردانی هر میزبان از پنل خودش انجام می‌شود.</p>
-    <form id="checkpoint-form" class="form-grid"><label class="field">شناسهٔ مشترک<input name="group" required dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}"></label><div class="route-check"><div class="inventory-actions"><button type="submit" class="btn outline">ثبت نقطهٔ بازیابی</button><button id="checkpoint-receipt" type="button" class="btn outline">دریافت وضعیت میزبان</button></div></div></form>
+    <form id="checkpoint-form" class="form-grid"><label class="field">شناسهٔ مشترک<input name="group" required dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}"></label><div class="route-check"><div class="inventory-actions"><button type="submit" class="btn outline">ثبت نقطهٔ بازیابی</button><button id="checkpoint-receipt" type="button" class="btn outline"><span data-icon="download"></span>دریافت وضعیت میزبان</button></div></div></form>
     <label class="field">مقایسه با فایل وضعیت میزبان مقابل<input type="file" id="checkpoint-peer" accept=".json,application/json"></label>
     <p id="checkpoint-comparison" class="route-flow" role="status" hidden></p>
     <ul class="admin-list" id="history-list"></ul>
@@ -452,9 +476,9 @@
   </div>
 </dialog>
 
-<dialog id="rotation-dialog" aria-labelledby="rotation-title">
+<dialog id="rotation-dialog" data-dialog-icon="key" aria-labelledby="rotation-title">
   <form id="rotation-form">
-    <div class="modal-head"><h2 id="rotation-title">گردش مرحله‌ای کلید KCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+    <div class="modal-head"><h2 id="rotation-title">گردش مرحله‌ای کلید KCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body form-grid">
       <p class="muted wide" id="rotation-help"></p>
       <label class="field">نام نمونهٔ جدید<input name="name" required dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}"></label>
@@ -465,13 +489,13 @@
       <p id="rotation-result" class="wide" role="status" hidden></p>
       <p class="error wide" id="rotation-error" role="alert" hidden></p>
     </div>
-    <div class="modal-foot"><button class="btn primary" type="submit">ساخت نمونهٔ آماده‌به‌کار</button></div>
+    <div class="modal-foot"><button class="btn primary" type="submit"><span data-icon="key"></span>ساخت نمونهٔ آماده‌به‌کار</button></div>
   </form>
 </dialog>
 
-<dialog id="recovery-dialog" aria-labelledby="recovery-title">
+<dialog id="recovery-dialog" data-dialog-icon="undo" aria-labelledby="recovery-title">
   <form id="recovery-form">
-    <div class="modal-head"><h2 id="recovery-title"></h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+    <div class="modal-head"><h2 id="recovery-title"></h2><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body">
       <p id="recovery-description" class="muted"></p>
       <div class="form-grid">
@@ -487,25 +511,25 @@
       </section>
       <p id="recovery-error" class="error" role="alert" hidden></p>
     </div>
-    <div class="modal-foot"><button id="recovery-submit" class="btn primary" type="submit"></button><button id="recovery-apply" class="btn outline" type="button" hidden>ساخت و فعال‌سازی تونل</button></div>
+    <div class="modal-foot"><button id="recovery-submit" class="btn primary" type="submit"></button><button id="recovery-apply" class="btn outline" type="button" hidden><span data-icon="play"></span>ساخت و فعال‌سازی تونل</button></div>
   </form>
 </dialog>
 
-<dialog id="support-dialog" aria-labelledby="support-title">
-  <div class="modal-head"><h2 id="support-title">پیش‌نمایش گزارش قابل‌اشتراک</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
+<dialog id="support-dialog" data-dialog-icon="file" aria-labelledby="support-title">
+  <div class="modal-head"><h2 id="support-title">پیش‌نمایش گزارش قابل‌اشتراک</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
   <div class="modal-body"><pre id="support-text" class="terminal" dir="ltr"></pre></div>
-  <div class="modal-foot"><button id="download-support" class="btn primary">دریافت JSON</button></div>
+  <div class="modal-foot"><button id="download-support" class="btn primary"><span data-icon="download"></span>دریافت JSON</button></div>
 </dialog>
 
 <!-- ───────────── Key dialog ───────────── -->
-<dialog id="key-dialog" aria-labelledby="key-title">
+<dialog id="key-dialog" data-dialog-icon="key" aria-labelledby="key-title">
   <div class="modal-head"><div><h2 id="key-title">کلید مشترک سرور</h2><p class="muted">برای ساخت کلاینت، همین کلید را در پنل میزبان دوم وارد کنید.</p></div><button class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
   <div class="modal-body"><div class="key-box"><span data-icon="key"></span><input id="key-value" readonly dir="ltr" aria-label="کلید مشترک"></div></div>
-  <div class="modal-foot"><button class="btn ghost" data-close>بستن</button><button id="copy" class="btn primary">کپی کلید</button></div>
+  <div class="modal-foot"><button class="btn ghost" data-close>بستن</button><button id="copy" class="btn primary"><span data-icon="copy"></span>کپی کلید</button></div>
 </dialog>
 
 <!-- ───────────── Confirm dialog (replaces window.confirm) ───────────── -->
-<dialog id="confirm-dialog" class="alert-dialog" aria-labelledby="confirm-title">
+<dialog id="confirm-dialog" data-dialog-icon="alert" class="alert-dialog" aria-labelledby="confirm-title">
   <div class="modal-body">
     <h2 id="confirm-title">تأیید عملیات</h2>
     <p id="confirm-text" class="muted"></p>
