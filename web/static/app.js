@@ -422,6 +422,7 @@ async function refresh() {
   try {
     const overview = await api("overview");
     latestOverview = overview;
+    updateTransportAvailability(overview.quic);
     tunnels = overview.tunnels;
     const topology = topologies[overview.topology] || topologies.unknown;
     $("#topology").textContent = $("#hero-topology").textContent = topology;
@@ -621,6 +622,26 @@ async function loadArchives() {
 }
 
 const create = $("#create-form");
+const createSubmit = create.querySelector("[type=submit]");
+let createSaving = false;
+for (const method of create.querySelectorAll('[name="method"]')) {
+  method.onchange = updateCreateMethod;
+}
+
+function updateCreateMethod() {
+  const method = create.elements.method.value;
+  const paqet = method === "paqet";
+  const unavailable = method === "quic" && quicAvailable !== true;
+  const fields = $("#paqet-create-fields");
+  fields.hidden = fields.disabled = !paqet;
+  createSubmit.textContent = paqet ? "ساخت و راه‌اندازی" : "ادامهٔ تنظیم " + routeNames[method];
+  createSubmit.disabled = createSaving || unavailable;
+  const status = $("#create-quic-status");
+  status.hidden = !unavailable;
+  status.textContent = quicAvailable == null ? "در حال بررسی پشتیبانی QUIC…" :
+    "برای استفاده از QUIC روی این سرور، نصب‌کننده را با گزینهٔ --with-quic اجرا کنید.";
+}
+
 for (const radio of create.querySelectorAll('[name="role-pick"]')) {
   radio.onchange = () => { create.elements.role.value = radio.value; useRole(); };
 }
@@ -651,15 +672,24 @@ function addForward() {
 }
 create.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const method = create.elements.method.value;
+  if (method !== "paqet") {
+    if (method === "quic" && quicAvailable !== true) return;
+    const role = create.elements.role.value === "client" ? "entry" : "receiver";
+    $("#create-dialog").close();
+    openRelay(undefined, {role, method});
+    return;
+  }
   const data = Object.fromEntries(new FormData(create));
+  delete data.method;
   delete data["role-pick"];
   if (peerTransport && data.role === "client") data.transport = peerTransport;
   if (data.role === "client") {
     data.forwards = Array.from($("#forward-rows").children, (row) =>
       Object.fromEntries(Array.from(row.querySelectorAll("[data-field]"), (field) => [field.dataset.field, field.value])));
   }
-  const submit = create.querySelector("[type=submit]");
-  submit.disabled = true;
+  createSaving = true;
+  updateCreateMethod();
   showError("#create-error");
   try {
     const result = await api("tunnels", data);
@@ -673,7 +703,8 @@ create.addEventListener("submit", async (event) => {
   } catch (error) {
     showError("#create-error", error.message);
   } finally {
-    submit.disabled = false;
+    createSaving = false;
+    updateCreateMethod();
   }
 });
 const batch = $("#batch-form");
@@ -974,6 +1005,7 @@ document.querySelectorAll("[data-create]").forEach((button) => {
     else if (latestOverview?.region === "foreign") create.elements.role.value = "server";
     else if (["client", "server"].includes(latestOverview?.topology)) create.elements.role.value = latestOverview.topology;
     useRole();
+    updateCreateMethod();
     $("#create-dialog").showModal();
   };
 });
@@ -1180,7 +1212,7 @@ setInterval(() => { if (!document.hidden && $("#probe-live").checked) probe(); }
 const relayForm = $("#relay-form");
 const routeNames = {paqet:"Paqet", https:"HTTPS", quic:"QUIC", standby:"Paqet آماده‌به‌کار"};
 let relayProfile, quicProfile, storedRelayPeer, storedQuicPeer, relayLoading = false;
-let quicAvailable = false;
+let quicAvailable;
 
 function downloadJson(filename, value) {
   const link = document.createElement("a");
@@ -1217,6 +1249,13 @@ function updateRelayForm() {
   if (relayForm.elements.automatic.disabled) relayForm.elements.automatic.checked = false;
   const peer = relayProfile ? relayProfile.domain + ":" + relayProfile.port : storedRelayPeer ? "گیرندهٔ HTTPS ثبت‌شده" : "فایل گیرنده";
   const quic = quicProfile ? quicProfile.domain + ":" + quicProfile.port : storedQuicPeer ? "گیرندهٔ QUIC ثبت‌شده" : "فایل گیرندهٔ QUIC";
+  for (const [field, kind, profile, stored] of [["#relay-profile", "https", relayProfile, storedRelayPeer],
+                                                ["#quic-profile", "quic", quicProfile, storedQuicPeer]]) {
+    const required = !receiver && route.value === kind && !stored;
+    $(field).required = required;
+    $(field + "-status").textContent = profile?.domain || (stored ? "فایل قبلی حفظ می‌شود." :
+      required ? "فایل اتصال صادرشده از گیرنده لازم است." : "اختیاری");
+  }
   const hops = {paqet:primary.value, standby:backup.value, https:peer, quic};
   listen.placeholder = receiver ? (transport.value === "quic" ? "0.0.0.0:24443" : "0.0.0.0:8443") : "127.0.0.1:24105";
   $("#relay-preview").textContent = receiver
@@ -1230,18 +1269,25 @@ function updateQuicOptions() {
   $("#quic-profile").disabled = !quicAvailable;
 }
 
-function openRelay(row, role = "entry") {
+function updateTransportAvailability(available) {
+  if (quicAvailable === available) return;
+  quicAvailable = available;
+  updateQuicOptions();
+  updateCreateMethod();
+}
+
+function openRelay(row, {role = "entry", method} = {}) {
   relayForm.reset();
   relayForm.elements.role.value = role;
+  if (method) relayForm.elements.transport.value = method;
+  $("#relay-method-back").hidden = !method;
   relayProfile = quicProfile = undefined;
   storedQuicPeer = Boolean(row?.has_quic_peer);
-  $("#quic-profile-status").textContent = storedQuicPeer ? "فایل قبلی حفظ می‌شود." : "اختیاری";
   storedRelayPeer = Boolean(row?.has_peer);
-  $("#relay-profile-status").textContent = storedRelayPeer ? "فایل اتصال قبلی حفظ می‌شود." : "اختیاری";
   for (const key of ["name", "role", "transport", "listen", "domain", "target", "primary", "backup", "probe", "probe_host", "probe_path", "budget"]) {
     if (row?.[key] !== undefined) relayForm.elements[key].value = socketLabel(row[key]) || relayForm.elements[key].value;
   }
-  relayForm.elements.selected.value = row?.configured || "paqet";
+  relayForm.elements.selected.value = row?.configured || method || "paqet";
   relayForm.elements.automatic.checked = Boolean(row?.automatic);
   relayForm.elements.name.readOnly = Boolean(row);
   relayForm.elements.role.disabled = Boolean(row);
@@ -1256,9 +1302,14 @@ $("#add-relay").onclick = () => openRelay();
 for (const button of document.querySelectorAll("[data-open-receiver]")) {
   button.onclick = () => {
     if (currentPage !== "relays") selectPage("relays");
-    openRelay(undefined, "receiver");
+    openRelay(undefined, {role:"receiver"});
   };
 }
+$("#relay-method-back").onclick = () => {
+  $("#relay-dialog").close();
+  $("#create-dialog").showModal();
+  create.querySelector('[name="method"]:checked').focus();
+};
 relayForm.oninput = updateRelayForm;
 for (const [selector, kind] of [["#relay-profile", "https"], ["#quic-profile", "quic"]]) {
   $(selector).onchange = async event => {
@@ -1273,8 +1324,6 @@ for (const [selector, kind] of [["#relay-profile", "https"], ["#quic-profile", "
     } catch (error) { showError("#relay-form-error", error.message); }
     if (kind === "quic") quicProfile = profile;
     else relayProfile = profile;
-    const stored = kind === "quic" ? storedQuicPeer : storedRelayPeer;
-    $(selector + "-status").textContent = profile?.domain || (stored ? "فایل قبلی حفظ می‌شود." : "اختیاری");
     updateRelayForm();
   };
 }
@@ -1291,7 +1340,8 @@ relayForm.onsubmit = async (event) => {
       peer:relayProfile, keep_peer:storedRelayPeer, quic_peer:quicProfile, keep_quic_peer:storedQuicPeer});
     $("#relay-dialog").close();
     toast(result.certificate_pending ? "درخواست صدور گواهی ثبت شد." : "مسیر ذخیره شد.");
-    await loadRelays();
+    if (!$("#relay-method-back").hidden && currentPage !== "relays") selectPage("relays");
+    else await loadRelays();
   } catch (error) { showError("#relay-form-error", error.message); }
   finally { button.disabled = false; }
 };
@@ -1395,8 +1445,7 @@ async function loadRelays() {
   relayLoading = true;
   try {
     const data = await api("relays");
-    quicAvailable = data.quic;
-    updateQuicOptions();
+    updateTransportAvailability(data.quic);
     $("#quic-install-hint").hidden = quicAvailable;
     const job = data.certificate_job;
     const progress = $("#certificate-job");

@@ -7,8 +7,8 @@
 <meta name="theme-color" content="#09090b">
 <title>Paqet · میز کار</title>
 <link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css">
-<script src="/app.js?v=receiver-acme" defer></script>
+<link rel="stylesheet" href="/styles.css?v=tunnel-method">
+<script src="/app.js?v=tunnel-method" defer></script>
 </head>
 <body>
 
@@ -258,40 +258,49 @@
   <form id="create-form">
     <div class="modal-head"><div><h2 id="create-title">ساخت تونل</h2><p class="muted">پیکربندی و فعال‌سازی سرویس روی همین میزبان</p></div><button type="button" class="btn ghost icon" data-close aria-label="بستن"><span data-icon="close"></span></button></div>
     <div class="modal-body">
+      <fieldset class="segmented tunnel-method">
+        <legend>روش تونل</legend>
+        <label><input type="radio" name="method" value="paqet" checked><span><b>Paqet</b><small>KCP</small></span></label>
+        <label><input type="radio" name="method" value="quic"><span><b>QUIC</b><small>UDP</small></span></label>
+        <label><input type="radio" name="method" value="https"><span><b>HTTPS</b><small>TCP</small></span></label>
+      </fieldset>
+      <p id="create-quic-status" class="muted" role="status" hidden></p>
       <fieldset class="segmented" aria-label="نقش">
         <label><input type="radio" name="role-pick" value="server"><span data-icon="server"></span><span><b>سرور</b><small>میزبان خارج، پذیرندهٔ اتصال</small></span></label>
         <label><input type="radio" name="role-pick" value="client"><span data-icon="globe"></span><span><b>کلاینت</b><small>میزبان ایران، اتصال به سرور</small></span></label>
       </fieldset>
-      <div class="form-grid">
-        <label class="field">نام تونل<input name="name" required dir="ltr" maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,47}" placeholder="edge-01"></label>
-        <label class="field role-field">نقش<select name="role" class="select"><option value="server">سرور</option><option value="client">کلاینت</option></select></label>
-        <label class="field">پورت تونل<input name="port" required type="number" min="1" max="65535" value="443" dir="ltr"></label>
-        <label id="remote-label" class="field" hidden>IPv4 سرور مقصد<input name="remote" dir="ltr" placeholder="203.0.113.10"></label>
-        <label class="field wide">کلید مشترک<input name="key" type="password" dir="ltr" minlength="8" maxlength="128" autocomplete="off" placeholder="برای ساخت خودکار خالی بگذارید"></label>
-      </div>
-      <details class="advanced">
-        <summary><span data-icon="sliders"></span>تنظیمات پیشرفتهٔ KCP<span class="summary-chevron" data-icon="chevron-down"></span></summary>
+      <fieldset id="paqet-create-fields" aria-label="تنظیمات Paqet">
         <div class="form-grid">
-          <label class="field">حالت KCP<select name="mode" class="select" dir="ltr"><option>fast</option><option>normal</option><option>fast2</option><option>fast3</option><option>manual</option></select></label>
-          <label class="field">MTU<input name="mtu" type="number" min="50" max="1500" value="1350" required dir="ltr"></label>
-          <label class="field">تعداد اتصال KCP<input name="conn" type="number" min="1" max="256" value="1" required dir="ltr"></label>
+          <label class="field">نام تونل<input name="name" required dir="ltr" maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9_\-]{0,47}" placeholder="edge-01"></label>
+          <label class="field role-field">نقش<select name="role" class="select"><option value="server">سرور</option><option value="client">کلاینت</option></select></label>
+          <label class="field">پورت تونل<input name="port" required type="number" min="1" max="65535" value="443" dir="ltr"></label>
+          <label id="remote-label" class="field" hidden>IPv4 سرور مقصد<input name="remote" dir="ltr" placeholder="203.0.113.10"></label>
+          <label class="field wide">کلید مشترک<input name="key" type="password" dir="ltr" minlength="8" maxlength="128" autocomplete="off" placeholder="برای ساخت خودکار خالی بگذارید"></label>
         </div>
-      </details>
-      <details class="advanced"><summary>تنظیمات انتقال و گزارش</summary><div class="form-grid">
-        <label class="field">رمزنگاری KCP<select name="block"><option value="">پیش‌فرض یا فایل اتصال</option><option>aes</option><option>aes-128-gcm</option><option>aes-128</option><option>aes-192</option><option>salsa20</option><option>blowfish</option><option>twofish</option><option>cast5</option><option>3des</option><option>tea</option><option>xtea</option><option>xor</option><option>sm4</option><option>none</option><option>null</option></select></label>
-        <label class="field">سطح گزارش<select name="level"><option>error</option><option>info</option><option>warn</option><option>debug</option><option>fatal</option><option>none</option></select></label>
-        <label class="field">بافر TCP (بایت)<input name="tcpbuf" type="number" min="0" max="2147483647"></label>
-        <label class="field">بافر UDP (بایت)<input name="udpbuf" type="number" min="0" max="2147483647"></label>
-      </div></details>
-      <section id="forwards" class="forwards" hidden>
-        <label class="field">فایل اتصال سرور خارج<input id="peer-file" type="file" accept=".json,application/json"></label>
-        <p class="muted" id="peer-status"></p>
-        <label class="field">پورت SOCKS5 روی میزبان محلی<input name="socks" type="number" min="1" max="65535" dir="ltr" placeholder="اختیاری"></label>
-        <div class="form-grid"><label class="field">IPv4 شنود SOCKS5<input name="socks_ip" value="127.0.0.1" dir="ltr"></label><label class="field">کاربر SOCKS5<input name="socks_user"></label><label class="field">رمز SOCKS5<input name="socks_password" type="password" autocomplete="new-password"></label></div>
-        <div class="forward-head"><h3>انتقال پورت</h3><button id="add-forward" type="button" class="btn outline sm"><span data-icon="plus"></span>افزودن قانون</button></div>
-        <div id="forward-rows"></div>
-        <p id="create-route-preview" class="route-flow" dir="ltr" aria-live="polite" hidden></p>
-      </section>
+        <details class="advanced">
+          <summary><span data-icon="sliders"></span>تنظیمات پیشرفتهٔ KCP<span class="summary-chevron" data-icon="chevron-down"></span></summary>
+          <div class="form-grid">
+            <label class="field">حالت KCP<select name="mode" class="select" dir="ltr"><option>fast</option><option>normal</option><option>fast2</option><option>fast3</option><option>manual</option></select></label>
+            <label class="field">MTU<input name="mtu" type="number" min="50" max="1500" value="1350" required dir="ltr"></label>
+            <label class="field">تعداد اتصال KCP<input name="conn" type="number" min="1" max="256" value="1" required dir="ltr"></label>
+          </div>
+        </details>
+        <details class="advanced"><summary>تنظیمات انتقال و گزارش</summary><div class="form-grid">
+          <label class="field">رمزنگاری KCP<select name="block"><option value="">پیش‌فرض یا فایل اتصال</option><option>aes</option><option>aes-128-gcm</option><option>aes-128</option><option>aes-192</option><option>salsa20</option><option>blowfish</option><option>twofish</option><option>cast5</option><option>3des</option><option>tea</option><option>xtea</option><option>xor</option><option>sm4</option><option>none</option><option>null</option></select></label>
+          <label class="field">سطح گزارش<select name="level"><option>error</option><option>info</option><option>warn</option><option>debug</option><option>fatal</option><option>none</option></select></label>
+          <label class="field">بافر TCP (بایت)<input name="tcpbuf" type="number" min="0" max="2147483647"></label>
+          <label class="field">بافر UDP (بایت)<input name="udpbuf" type="number" min="0" max="2147483647"></label>
+        </div></details>
+        <section id="forwards" class="forwards" hidden>
+          <label class="field">فایل اتصال سرور خارج<input id="peer-file" type="file" accept=".json,application/json"></label>
+          <p class="muted" id="peer-status"></p>
+          <label class="field">پورت SOCKS5 روی میزبان محلی<input name="socks" type="number" min="1" max="65535" dir="ltr" placeholder="اختیاری"></label>
+          <div class="form-grid"><label class="field">IPv4 شنود SOCKS5<input name="socks_ip" value="127.0.0.1" dir="ltr"></label><label class="field">کاربر SOCKS5<input name="socks_user"></label><label class="field">رمز SOCKS5<input name="socks_password" type="password" autocomplete="new-password"></label></div>
+          <div class="forward-head"><h3>انتقال پورت</h3><button id="add-forward" type="button" class="btn outline sm"><span data-icon="plus"></span>افزودن قانون</button></div>
+          <div id="forward-rows"></div>
+          <p id="create-route-preview" class="route-flow" dir="ltr" aria-live="polite" hidden></p>
+        </section>
+      </fieldset>
       <p class="error banner" id="create-error" role="alert" hidden></p>
     </div>
     <div class="modal-foot"><button type="button" class="btn ghost" data-close>انصراف</button><button class="btn primary" type="submit">ساخت و راه‌اندازی</button></div>
@@ -401,7 +410,7 @@
   <form id="relay-form">
     <div class="modal-head"><h2 id="relay-title">تنظیم مسیر TCP</h2><button type="button" class="btn ghost icon" data-close aria-label="بستن">×</button></div>
     <div class="modal-body form-grid">
-      <label class="field">نام مسیر<input name="name" dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" required></label>
+      <label class="field">نام مسیر<input name="name" dir="ltr" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,47}" required></label>
       <label class="field">نقش<select name="role"><option value="entry">ورودی سمت ایران</option><option value="receiver">گیرنده سمت خارج</option></select></label>
       <label class="field wide">آدرس شنود IPv4 و پورت<input name="listen" dir="ltr" placeholder="127.0.0.1:24105" required></label>
       <div id="receiver-fields" class="form-grid wide" hidden>
@@ -426,7 +435,7 @@
       <p class="muted wide route-flow" id="relay-preview" dir="auto"></p>
       <p class="error wide" id="relay-form-error" role="alert" hidden></p>
     </div>
-    <div class="modal-foot"><button class="btn primary" type="submit">ذخیره و راه‌اندازی</button></div>
+    <div class="modal-foot"><button class="btn outline" type="button" id="relay-method-back" hidden>بازگشت به انتخاب روش</button><button class="btn primary" type="submit">ذخیره و راه‌اندازی</button></div>
   </form>
 </dialog>
 

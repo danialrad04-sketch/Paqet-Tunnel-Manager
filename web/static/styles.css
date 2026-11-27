@@ -424,6 +424,9 @@ dialog.sheet .modal-body{padding-top:18px}
 .segmented label:has(input:checked)>[data-icon]{background:var(--accent-soft);color:var(--accent)}
 .segmented label:has(input:focus-visible){outline:2px solid var(--ring);outline-offset:2px}
 .role-field{display:none!important}
+.tunnel-method{grid-template-columns:repeat(3,minmax(0,1fr))}
+.tunnel-method legend{font-size:13.5px;font-weight:600;margin-block-end:8px}
+#paqet-create-fields{display:grid;gap:16px;border:0;padding:0;margin:0;min-width:0}
 
 /* Disclosure */
 .advanced,.danger-zone{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-elev)}
@@ -547,7 +550,7 @@ pre.terminal{background:var(--terminal);color:#d4d4d8;border-color:#1f1f24;min-h
   .inventory footer,.admin-list li{padding-inline:14px}
   th:first-child,td:first-child{padding-inline-start:14px}
   .form-grid,.form-grid.three,#hosts-form{grid-template-columns:1fr}
-  .segmented{grid-template-columns:1fr}
+  .segmented:not(.tunnel-method){grid-template-columns:1fr}
   .forward-row{grid-template-columns:1fr 1fr}
   .forward-row label:nth-child(3){grid-column:1/2}
   .detail-facts{grid-template-columns:1fr}

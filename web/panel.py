@@ -1042,7 +1042,7 @@ class Panel(BaseHTTPRequestHandler):
                 self.server.sessions.pop(self.session(), None)
                 self.answer(200, {}, "paqet_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
             elif method == "GET" and path == "/api/overview":
-                self.answer(200, manager.health())
+                self.answer(200, {**manager.health(), "quic": bool(self.server.relay.quic) or manager.demo})
             elif method == "GET" and path == "/api/relays":
                 self.answer(200, self.server.relay.call("view"))
             elif method == "POST" and path == "/api/relays":
