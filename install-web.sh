@@ -61,7 +61,7 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
     { echo 'Missing panel files. Use bootstrap-web.sh for installation from GitHub.' >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 /usr/bin/apt-get update
-/usr/bin/apt-get install -y python3 python3-yaml python3-cryptography libpcap-dev iptables iproute2 iputils-ping curl ca-certificates
+/usr/bin/apt-get install -y python3 python3-yaml python3-cryptography libpcap-dev iptables iproute2 iputils-ping curl ca-certificates certbot
 staging=$(mktemp -d)
 trap 'rm -rf -- "$staging"' EXIT
 
@@ -129,7 +129,7 @@ if [[ -x $quic_python ]]; then
     fi
     panel_python=$quic_python
 fi
-install -m 0644 "$source_dir"/web/{panel,relay,operations,recovery,quic_transport}.py /opt/paqet-panel/
+install -m 0644 "$source_dir"/web/{panel,relay,operations,recovery,quic_transport,acme}.py /opt/paqet-panel/
 install -m 0755 "$source_dir/web/packet-rules.sh" /opt/paqet-panel/packet-rules.sh
 install -m 0644 "$source_dir"/web/static/*.html "$source_dir"/web/static/*.css "$source_dir"/web/static/*.js /opt/paqet-panel/static/
 install -m 0644 "$source_dir"/web/static/fonts/* /opt/paqet-panel/static/fonts/
@@ -162,6 +162,7 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
+systemctl enable --now certbot.timer
 systemctl enable paqetpanel.service
 systemctl restart paqetpanel.service
 systemctl is-active --quiet paqetpanel.service

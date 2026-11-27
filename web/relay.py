@@ -14,6 +14,7 @@ import ssl
 import threading
 import time
 
+import acme
 import panel as p
 
 try:
@@ -158,6 +159,7 @@ class Relay:
         self.runtime = {}
         self.contexts = {}
         self.quic_contexts = {}
+        self.certificate_job = None
         self.quic = quic_transport.Pool(ssl.get_default_verify_paths().cafile) if quic_transport else None
         self.history = defaultdict(list)
         self.connections = defaultdict(int)
@@ -188,9 +190,7 @@ class Relay:
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.set_alpn_protocols(["http/1.1"])
         try:
-            domain = config["domain"]
-            context.load_cert_chain(f"/etc/letsencrypt/live/{domain}/fullchain.pem",
-                                    f"/etc/letsencrypt/live/{domain}/privkey.pem")
+            context.load_cert_chain(*self.certificates(config))
         except (ValueError, OSError) as error:
             raise p.Problem("گواهی یا کلید TLS در مسیر Let's Encrypt معتبر و خواندنی نیست.") from error
         return context
@@ -280,8 +280,7 @@ class Relay:
 
     @staticmethod
     def certificates(config):
-        directory = f'/etc/letsencrypt/live/{config["domain"]}'
-        return f"{directory}/fullchain.pem", f"{directory}/privkey.pem"
+        return acme.paths(config["domain"])
 
     async def listen(self, config):
         name = config["name"]
@@ -318,6 +317,47 @@ class Relay:
     async def change(self, action, data):
         async with self.configuration_lock:
             return await self.change_locked(action, data)
+
+    async def save_with_certificate(self, data):
+        async with self.configuration_lock:
+            if data.get("role") != "receiver":
+                raise p.Problem("صدور گواهی برای گیرندهٔ HTTPS یا QUIC است.")
+            config = self.parse(data)
+            name, domain = config["name"], config["domain"]
+            original = self.configs.get(name)
+            if original is None and len(self.configs) >= 40:
+                raise p.Problem("حداکثر ۴۰ مسیر قابل ثبت است.")
+            if self.demo or acme.inspect(domain)["status"] == "ready":
+                return await self.change_locked("save", data)
+            if self.certificate_job and self.certificate_job["status"] == "running":
+                raise p.Problem("صدور گواهی دیگری در حال اجراست.")
+            job = {"status": "running", "name": name, "domain": domain}
+            self.certificate_job = job
+            asyncio.create_task(self.finish_certificate(job, data, original))
+            return {"certificate_pending": True}
+
+    async def finish_certificate(self, job, data, original):
+        try:
+            await acme.issue(job["domain"])
+        except p.Problem as error:
+            job.update(status="error", error=str(error))
+            return
+        except OSError:
+            logging.exception("Could not issue certificate for %s", job["domain"])
+            job.update(status="error", error="اجرای Certbot روی میزبان ناموفق بود.")
+            return
+        try:
+            async with self.configuration_lock:
+                if self.configs.get(job["name"]) is not original:
+                    raise p.Problem("مسیر هنگام صدور تغییر کرد. فرم را با تنظیمات تازه ذخیره کنید.")
+                await self.change_locked("save", data)
+        except p.Problem as error:
+            job.update(status="error", error="گواهی آماده شد. راه‌اندازی گیرنده نیاز به بررسی دارد. " + str(error))
+        except OSError:
+            logging.exception("Could not activate receiver %s", job["name"])
+            job.update(status="error", error="گواهی آماده شد. راه‌اندازی گیرنده روی میزبان ناموفق بود.")
+        else:
+            job["status"] = "done"
 
     async def change_locked(self, action, data):
         name = data.get("name")
@@ -554,6 +594,13 @@ class Relay:
         history.append({"time": now, "tests": record["tests"].copy(), "selected": selected})
         del history[:-120]
 
+    def reload_certificates(self):
+        for name, context in {**self.contexts, **self.quic_contexts}.items():
+            try:
+                context.load_cert_chain(*self.certificates(self.configs[name]))
+            except (OSError, ValueError):
+                logging.warning("Could not reload TLS certificate for %s", name)
+
     async def worker(self):
         while True:
             try:
@@ -571,11 +618,7 @@ class Relay:
                                     await self.listen(config)
                                 except (OSError, p.Problem):
                                     logging.warning("Could not open relay listener %s", name)
-                        for name, context in {**self.contexts, **self.quic_contexts}.items():
-                            try:
-                                context.load_cert_chain(*self.certificates(self.configs[name]))
-                            except (OSError, ValueError):
-                                logging.warning("Could not reload TLS certificate for %s", name)
+                        self.reload_certificates()
                 entries = [c for c in self.configs.values() if c["role"] == "entry"]
                 await asyncio.gather(*(self.monitor(c) for c in entries))
             except Exception:
@@ -647,7 +690,8 @@ class Relay:
             record = self.runtime.get(name, {})
             used = self.totals.get(name, {}).get(period, 0)
             budget = config.get("budget", 0) * 1024**3
-            rows.append({**{k: v for k, v in config.items() if k not in ("key", "peer", "quic_peer")},
+            certificate = acme.inspect(config["domain"]) if config["role"] == "receiver" and not self.demo else None
+            rows.append({"certificate": certificate, **{k: v for k, v in config.items() if k not in ("key", "peer", "quic_peer")},
                          "has_peer": bool(config.get("peer")), "has_quic_peer": bool(config.get("quic_peer")),
                          "routes": self.routes(config),
                          "configured": config.get("selected"),
@@ -658,7 +702,9 @@ class Relay:
                          "projected_days": round(budget / used * (now.day - 1 + now.hour / 24), 1)
                          if budget and used and now.day >= 2 else None,
                          "history": self.history.get(name, []), "comparison": self.comparisons.get(name)})
-        return {"demo": self.demo, "quic": bool(self.quic) or self.demo, "rows": json.loads(json.dumps(rows))}
+        return {"demo": self.demo, "quic": bool(self.quic) or self.demo,
+                "certificate_job": self.certificate_job.copy() if self.certificate_job else None,
+                "rows": json.loads(json.dumps(rows))}
 
     async def peer(self, name):
         config = self.configs.get(name, {}) if isinstance(name, str) else {}

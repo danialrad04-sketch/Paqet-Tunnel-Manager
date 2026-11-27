@@ -1047,7 +1047,9 @@ class Panel(BaseHTTPRequestHandler):
             elif method == "POST" and path == "/api/relays":
                 data = self.payload()
                 action = data.get("action")
-                if action in ("save", "remove"):
+                if action == "save" and data.get("issue_certificate") is True:
+                    result = self.server.relay.call("save_with_certificate", data)
+                elif action in ("save", "remove"):
                     result = self.server.relay.call("change", action, data)
                 elif action == "select":
                     result = self.server.relay.call("select", data.get("name"), data.get("route"))
@@ -1057,7 +1059,7 @@ class Panel(BaseHTTPRequestHandler):
                     result = self.server.relay.call("peer", data.get("name"))
                 else:
                     raise Problem("عملیات مسیر معتبر نیست.")
-                self.answer(200, result or {})
+                self.answer(202 if result and result.get("certificate_pending") else 200, result or {})
             elif method == "POST" and path == "/api/recovery":
                 from recovery import recover
                 self.answer(200, recover(manager, self.payload()))

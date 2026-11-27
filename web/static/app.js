@@ -1271,12 +1271,14 @@ relayForm.onsubmit = async (event) => {
   const button = relayForm.querySelector("[type=submit]");
   button.disabled = true;
   try {
-    await api("relays", {...Object.fromEntries(new FormData(relayForm)), action:"save",
-      role:relayForm.elements.role.value, automatic:relayForm.elements.automatic.checked,
+    const fields = relayForm.elements;
+    const result = await api("relays", {...Object.fromEntries(new FormData(relayForm)), action:"save",
+      role:fields.role.value, automatic:fields.automatic.checked,
+      issue_certificate:fields.role.value === "receiver" && fields.issue_certificate.checked,
       transport:relayForm.elements.transport.value,
       peer:relayProfile, keep_peer:storedRelayPeer, quic_peer:quicProfile, keep_quic_peer:storedQuicPeer});
     $("#relay-dialog").close();
-    toast("مسیر ذخیره شد.");
+    toast(result.certificate_pending ? "درخواست صدور گواهی ثبت شد." : "مسیر ذخیره شد.");
     await loadRelays();
   } catch (error) { showError("#relay-form-error", error.message); }
   finally { button.disabled = false; }
@@ -1322,6 +1324,12 @@ function relayCard(row, demo) {
   actions.className = "inventory-actions";
   if (row.role === "receiver") {
     addRelayInfo(body, row.transport === "quic" ? "گیرندهٔ QUIC روی UDP" : "گیرندهٔ HTTPS", row.domain + " → " + socketLabel(row.target), "ltr");
+    if (row.certificate) {
+      const {status, expires, managed} = row.certificate;
+      const label = {ready:"معتبر", expired:"منقضی", invalid:"نیازمند بررسی", missing:"پیدا نشد"}[status];
+      const expiry = expires ? " · انقضا " + new Date(expires).toLocaleDateString("fa-IR") : "";
+      addRelayInfo(body, "گواهی TLS", label + expiry + (managed ? " · تحت مدیریت Certbot" : ""));
+    }
     listButton(actions, "دریافت فایل اتصال", () => operateRelay(row, "profile"));
   } else {
     addRelayInfo(body, "مسیر فعال", routeNames[row.selected] + (row.automatic ? " · جابه‌جایی خودکار" : ""));
@@ -1377,6 +1385,17 @@ async function loadRelays() {
     const data = await api("relays");
     quicAvailable = data.quic;
     $("#quic-install-hint").hidden = quicAvailable;
+    const job = data.certificate_job;
+    const progress = $("#certificate-job");
+    progress.hidden = !job;
+    const message = job && {
+      running:"در حال صدور گواهی و راه‌اندازی گیرنده. می‌توانید این صفحه را ببندید.",
+      done:"گواهی معتبر نصب شد و گیرنده آماده است.",
+      error:job.error,
+    }[job.status];
+    const summary = job ? job.domain + " · " + message : "";
+    if (progress.textContent !== summary) progress.textContent = summary;
+    progress.classList.toggle("error", job?.status === "error");
     const hash = JSON.stringify(data);
     if (hash === lastRelays) return;
     lastRelays = hash;

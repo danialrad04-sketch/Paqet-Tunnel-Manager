@@ -201,7 +201,7 @@
         <div class="page-head"><div><h1>مسیرها و پایش</h1><p class="muted">مقایسهٔ Paqet، HTTPS و QUIC، پایش مقصد و مدیریت اتصال‌های جدید</p></div><button id="add-relay" class="btn primary"><span data-icon="plus"></span>مسیر جدید</button></div>
         <details class="card route-help"><summary>راهنمای اتصال ایران و خارج</summary>
           <ol class="guide-steps">
-            <li>در پنل خارج گیرندهٔ HTTPS روی TCP یا گیرندهٔ QUIC روی UDP بسازید. دامنه و گواهی Let’s Encrypt باید برای همان سرور باشند. مقصد را روی loopback خارج تنظیم کنید.</li>
+            <li>در پنل خارج گیرندهٔ HTTPS روی TCP یا گیرندهٔ QUIC روی UDP بسازید. دامنه را به سرور خارج وصل کنید و صدور خودکار Let’s Encrypt را فعال بگذارید. مقصد را روی loopback خارج تنظیم کنید.</li>
             <li>فایل اتصال را از گیرنده بگیرید. در ایران یک ورودی TCP روی پورتی آزاد ثبت کنید و فایل را وارد کنید. برای مقایسه، شنوندهٔ Paqet همان سرویس را نیز با آدرس loopback ایران وارد کنید.</li>
             <li>پایش و مقایسه را اجرا کنید. برای سرویس وب، به آدرسی اشاره کنید که هم HEAD و هم GET پاسخ می‌دهد. برای اندازه‌گیری زیر بار، فایل آزمون چندمگابایتی انتخاب کنید.</li>
             <li>برای انتقال پورت فعال، ابتدا شنوندهٔ Paqet را به یک پورت loopback منتقل کنید. سپس پورت عمومی را به ورودی این بخش اختصاص دهید. تغییر مسیر از این پس فقط اتصال‌های جدید را جابه‌جا می‌کند.</li>
@@ -210,6 +210,7 @@
         </details>
         <p id="relay-error" class="error banner" role="alert" hidden></p>
         <p id="quic-install-hint" class="muted" hidden>برای فعال کردن مسیر QUIC، نصب‌کننده را روی هر دو میزبان با گزینهٔ <bdi>--with-quic</bdi> اجرا کنید.</p>
+        <p id="certificate-job" class="route-result" aria-live="polite" hidden></p>
         <div id="relay-list" class="relay-list"></div>
       </section>
 
@@ -385,7 +386,7 @@
     <div class="modal-body"><label class="field">نام سرویس<input name="name" required dir="ltr"></label>
       <label class="field">تنظیمات YAML<textarea name="yaml" dir="ltr" spellcheck="false" required rows="18"></textarea></label>
       <p class="muted">کلید و رمزها در این فایل هستند. ذخیرهٔ ویرایش، سرویس فعال را دوباره راه‌اندازی می‌کند.</p>
-      <label class="field" id="yaml-group-label">شناسهٔ عملیات دوطرفه (اختیاری)<input name="group" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" dir="ltr"></label>
+      <label class="field" id="yaml-group-label">شناسهٔ عملیات دوطرفه (اختیاری)<input name="group" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{0,47}" dir="ltr"></label>
       <pre class="terminal" id="yaml-diff" dir="ltr" hidden></pre>
       <p class="error" id="yaml-error" hidden role="alert"></p></div>
     <div class="modal-foot"><button class="btn primary" type="submit">ذخیره و اعمال</button><button type="button" id="preview-yaml" class="btn outline">پیش‌نمایش تغییرات</button><button type="button" data-close class="btn outline">انصراف</button></div>
@@ -403,7 +404,8 @@
         <label class="field wide">پروتکل گیرنده<select name="transport"><option value="https">HTTPS روی TCP</option><option value="quic">QUIC روی UDP</option></select></label>
         <label class="field">دامنه و نام گواهی<input name="domain" placeholder="relay.example.org" dir="ltr"></label>
         <label class="field">مقصد روی خارج<input name="target" placeholder="127.0.0.1:14105" dir="ltr"></label>
-        <p class="muted hint wide">گواهی و کلید از مسیر استاندارد Let’s Encrypt خوانده می‌شوند.</p>
+        <label class="route-check wide"><input name="issue_certificate" type="checkbox" checked> صدور خودکار گواهی Let’s Encrypt</label>
+        <p class="muted hint wide">برای صدور و تمدید، DNS دامنه باید به این میزبان برسد و TCP پورت ۸۰ از اینترنت در دسترس و برای Certbot آزاد باشد. پنل از گواهی معتبر موجود برای همین نام هم استفاده می‌کند.</p>
       </div>
       <div id="entry-fields" class="form-grid wide">
         <label class="field">شنوندهٔ Paqet روی ایران<input name="primary" placeholder="127.0.0.1:14105" dir="ltr"></label>
