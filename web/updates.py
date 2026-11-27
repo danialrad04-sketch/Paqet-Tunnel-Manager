@@ -57,6 +57,7 @@ class Updates:
         self.lock = threading.Lock()
         self.check = {"status": "idle"}
         self.approval = 0
+        self.install_after_check = False
 
     def installation(self):
         try:
@@ -78,21 +79,33 @@ class Updates:
     def view(self):
         with self.lock:
             check = self.check.copy()
-        return {"installed": revision(self.directory), "check": check, "installation": self.installation(),
+        installed = revision(self.directory)
+        if installed and check["status"] == "idle":
+            try:
+                cached = json.loads((self.directory / "update-feed.json").read_text())
+            except (FileNotFoundError, ValueError):
+                cached = None
+            if isinstance(cached, dict) and cached.get("latest") == installed:
+                check = {**cached, "status": "current", "base": installed}
+        return {"installed": installed, "check": check, "installation": self.installation(),
                 "repo": REPOSITORY, "demo": self.demo}
 
-    def start_check(self):
+    def start_check(self, install=False):
         with self.lock:
             if self.check["status"] == "checking":
+                self.install_after_check |= install and not self.demo
+                return
+            if self.installation()["status"] == "running":
                 return
             self.check = {"status": "checking"}
             self.approval = 0
+            self.install_after_check = install and not self.demo
         threading.Thread(target=self.fetch, name="panel-update-check", daemon=True).start()
 
     def fetch(self):
         checked = int(time.time())
-        current = revision(self.directory)
         try:
+            current = revision(self.directory)
             commits = get_commits()
             latest = commits[0]["sha"]
             known = next((index for index, row in enumerate(commits) if row["sha"] == current), None)
@@ -110,7 +123,20 @@ class Updates:
             result = {"status": "error", "checked": checked, "error": "ارتباط با GitHub یا خواندن فهرست تغییرات ناموفق بود."}
         with self.lock:
             self.check = result
+            if not self.demo and result["status"] in ("current", "available"):
+                try:
+                    p.atomic(self.directory / "update-feed.json", json.dumps(result), 0o600)
+                except OSError:
+                    pass  # Checking and installing can proceed if the changelog cache cannot be saved.
             self.approval = time.monotonic() + 900 if result["status"] == "available" else 0
+            if self.install_after_check and self.approval:
+                try:
+                    self.schedule(result["latest"])
+                except p.Problem as error:
+                    result["install_error"] = str(error)
+                except OSError:
+                    result["install_error"] = "ثبت فرایند نصب روی میزبان ناموفق بود."
+            self.install_after_check = False
 
     def apply(self, sha):
         if self.demo:
@@ -118,19 +144,22 @@ class Updates:
         if not isinstance(sha, str) or not re.fullmatch(SHA, sha):
             raise p.Problem("شناسهٔ نسخه معتبر نیست.")
         with self.lock:
-            base = revision(self.directory)
-            if (self.check.get("latest") != sha or self.check.get("base") != base
-                    or time.monotonic() >= self.approval):
-                raise p.Problem("ابتدا دوباره به‌روزرسانی را بررسی کنید.")
-            if self.installation()["status"] == "running":
-                raise p.Problem("نصب نسخه در حال اجراست.")
-            result = {"status": "running", "phase": "queued", "revision": sha, "time": int(time.time())}
-            path = self.directory / "update.json"
-            p.atomic(path, json.dumps(result), 0o600)
-            try:
-                p.run("systemd-run", "--quiet", "--collect", f"--unit={UNIT}", "--property=Type=exec",
-                      "/bin/bash", str(RUNNER), sha, base or "unknown")
-            except (p.Problem, OSError, subprocess.SubprocessError) as error:
-                p.atomic(path, json.dumps({**result, "status": "error", "phase": "schedule"}), 0o600)
-                raise p.Problem("سرویس نصب نسخه شروع نشد. گزارش systemd را بررسی کنید.") from error
-            self.approval = 0
+            self.schedule(sha)
+
+    def schedule(self, sha):
+        base = revision(self.directory)
+        if (self.check.get("latest") != sha or self.check.get("base") != base
+                or time.monotonic() >= self.approval):
+            raise p.Problem("ابتدا دوباره به‌روزرسانی را بررسی کنید.")
+        if self.installation()["status"] == "running":
+            raise p.Problem("نصب نسخه در حال اجراست.")
+        result = {"status": "running", "phase": "queued", "revision": sha, "time": int(time.time())}
+        path = self.directory / "update.json"
+        p.atomic(path, json.dumps(result), 0o600)
+        try:
+            p.run("systemd-run", "--quiet", "--collect", f"--unit={UNIT}", "--property=Type=exec",
+                  "/bin/bash", str(RUNNER), sha, base or "unknown")
+        except (p.Problem, OSError, subprocess.SubprocessError) as error:
+            p.atomic(path, json.dumps({**result, "status": "error", "phase": "schedule"}), 0o600)
+            raise p.Problem("سرویس نصب نسخه شروع نشد. گزارش systemd را بررسی کنید.") from error
+        self.approval = 0

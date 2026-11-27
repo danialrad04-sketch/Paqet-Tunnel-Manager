@@ -7,8 +7,8 @@
 <meta name="theme-color" content="#09090b">
 <title>Paqet · میز کار</title>
 <link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=updates-dialogs">
-<script src="/app.js?v=updates-dialogs" defer></script>
+<link rel="stylesheet" href="/styles.css?v=quick-update">
+<script src="/app.js?v=quick-update" defer></script>
 </head>
 <body>
 
@@ -64,8 +64,9 @@
       <div class="top-actions">
         <span id="demo" class="badge outline" hidden>داده‌های نمایشی</span>
         <span id="sync-state" class="sync" title="آخرین همگام‌سازی"><span class="live-dot"></span><span id="sync-time">—</span></span>
+        <button id="quick-panel-update" class="btn update-trigger sm" type="button" aria-label="بررسی و نصب به‌روزرسانی پنل" title="بررسی و نصب به‌روزرسانی پنل"><span data-icon="download"></span><span>آپدیت پنل</span></button>
         <button id="theme" class="btn outline icon" type="button" aria-label="تغییر پوسته" title="تغییر پوسته"><span data-icon="sun" class="theme-sun"></span><span data-icon="moon" class="theme-moon"></span></button>
-        <button id="refresh" class="btn outline icon" aria-label="به‌روزرسانی" title="به‌روزرسانی"><span data-icon="refresh"></span></button>
+        <button id="refresh" class="btn outline icon" type="button" aria-label="تازه‌سازی آمار" title="تازه‌سازی آمار"><span data-icon="refresh"></span></button>
       </div>
     </header>
 
@@ -221,19 +222,25 @@
 
       <section id="updates" class="page" hidden>
         <div class="page-head">
-          <div><h1>به‌روزرسانی پنل</h1><p class="muted">بررسی و نصب مستقیم از شاخهٔ <bdi>main</bdi> در GitHub</p></div>
-          <div class="inventory-actions">
-            <button id="check-updates" class="btn outline" type="button"><span data-icon="refresh"></span>بررسی به‌روزرسانی</button>
-            <button id="apply-update" class="btn primary" type="button" hidden><span data-icon="download"></span>نصب نسخهٔ جدید</button>
-          </div>
+          <div><h1>به‌روزرسانی پنل</h1><p class="muted">نسخهٔ شاخهٔ <bdi>main</bdi> در GitHub</p></div>
         </div>
-        <article class="card">
+        <article class="card update-card">
+          <div class="card-body update-command">
+            <div class="update-command-copy">
+              <span class="dialog-title-icon" data-icon="download"></span>
+              <div><h2>نسخهٔ پنل روی این سرور</h2><p id="update-restart-note" class="muted">اگر نسخهٔ تازه‌ای باشد، نصب فوراً شروع می‌شود و پنل دوباره راه‌اندازی می‌شود.</p></div>
+            </div>
+            <button id="check-updates" class="btn primary" type="button" aria-describedby="update-restart-note"><span data-icon="download"></span>بررسی و نصب به‌روزرسانی</button>
+          </div>
           <dl class="update-versions card-body">
             <div><dt>نسخهٔ نصب‌شده</dt><dd id="update-installed" dir="auto">—</dd></div>
             <div><dt>آخرین نسخه در GitHub</dt><dd id="update-latest" dir="auto">—</dd></div>
             <div><dt>آخرین بررسی</dt><dd id="update-checked">—</dd></div>
           </dl>
-          <p id="update-status" class="update-status card-body" role="status">برای دیدن نسخه‌ها، به‌روزرسانی را بررسی کنید.</p>
+          <div class="update-feedback card-body">
+            <span id="update-indicator" data-icon="activity"></span>
+            <p id="update-status" role="status" tabindex="-1">برای بررسی نسخهٔ جدید، دکمهٔ بالا را بزنید.</p>
+          </div>
         </article>
         <p id="update-error" class="error banner" role="alert" hidden></p>
         <article class="card">

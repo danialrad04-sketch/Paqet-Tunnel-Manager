@@ -1045,9 +1045,10 @@ class Panel(BaseHTTPRequestHandler):
                 self.answer(200, self.server.updates.view())
             elif method == "POST" and path == "/api/updates":
                 data = self.payload()
-                if data.get("action") == "check":
-                    self.server.updates.start_check()
-                elif data.get("action") == "apply":
+                action = data.get("action")
+                if action in ("check", "check-and-install"):
+                    self.server.updates.start_check(install=action == "check-and-install")
+                elif action == "apply":
                     self.server.updates.apply(data.get("revision"))
                 else:
                     raise Problem("عملیات به‌روزرسانی معتبر نیست.")

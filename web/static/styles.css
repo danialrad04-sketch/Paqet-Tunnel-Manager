@@ -627,13 +627,32 @@ pre.terminal{background:var(--terminal);color:#d4d4d8;border-color:#1f1f24;min-h
 .route-tests li p{width:100%}
 #history-list{margin-block:12px}
 
-/* Update history */
+/* Panel update control */
+.update-trigger{border-color:var(--accent-line);color:var(--accent);background:var(--accent-soft);white-space:nowrap}
+.update-trigger:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent-soft) 72%,var(--hover))}
+.update-card{overflow:hidden}
+.update-command{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--accent-soft) 30%,var(--card))
+}
+.update-command-copy{display:flex;align-items:center;gap:12px;min-width:0}
+.update-command-copy h2{font-size:15px;font-weight:650}
+.update-command-copy p{margin:4px 0 0;font-size:12px;line-height:1.7}
+.update-command .btn{min-height:44px;white-space:nowrap;flex:none}
 .update-versions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:0}
 .update-versions dt{color:var(--muted);font-size:12px;margin-bottom:5px}
 .update-versions dd{font-size:15px;font-weight:600;overflow-wrap:anywhere}
 .version-sha,.update-change-meta a{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.update-status{margin:0;border-top:1px solid var(--border);color:var(--muted);min-height:54px}
-.update-status.failed{color:var(--bad)}
+.update-feedback{
+  display:flex;align-items:center;gap:10px;border-top:1px solid var(--border);
+  color:var(--muted);min-height:54px;background:var(--bg-elev)
+}
+.update-feedback p{margin:0;outline:none}
+.update-feedback [data-icon] svg{width:17px;height:17px}
+.update-feedback[data-state="working"]{color:var(--accent)}
+.update-feedback[data-state="working"] svg{animation:turn 1.35s linear infinite}
+.update-feedback[data-state="ok"]{color:var(--ok)}
+.update-feedback[data-state="error"]{color:var(--bad)}
 .update-changes{list-style:none;padding:0;margin:0}
 .update-changes li{padding:14px 20px;border-top:1px solid var(--border);display:grid;gap:5px;overflow-wrap:anywhere}
 .update-changes li strong{font-size:13.5px;font-weight:600;text-align:start}
@@ -644,7 +663,15 @@ pre.terminal{background:var(--terminal);color:#d4d4d8;border-color:#1f1f24;min-h
 .update-changes details p{white-space:pre-wrap;margin:8px 0 0;color:var(--fg-2);font-size:13px}
 .btn.working svg{animation:turn 1.35s linear infinite}
 @keyframes turn{to{transform:rotate(360deg)}}
-@media (max-width:560px){
+@media (max-width:640px){
+  .top-actions{gap:6px}
+  .update-trigger.sm{height:40px;padding-inline:9px}
+  .update-command{align-items:stretch;flex-direction:column;gap:12px}
   .update-versions{grid-template-columns:repeat(2,minmax(0,1fr))}
-  #updates .page-head{align-items:stretch;flex-direction:column}
+}
+@media (max-width:375px){
+  .topbar{padding-inline:10px;gap:6px}
+  .topbar .path-root,.topbar .divider{display:none}
+  .topbar .path,.topbar .path strong{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .top-actions #demo{display:none}
 }

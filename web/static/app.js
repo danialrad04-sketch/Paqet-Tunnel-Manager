@@ -510,6 +510,7 @@ function selectPage(page) {
   if (page === "relays") loadRelays();
   $("#servers").hidden = page !== "servers";
   $("#updates").hidden = page !== "updates";
+  $("#quick-panel-update").hidden = page === "updates";
   if (page === "updates") loadUpdates();
   $("#tunnels").hidden = !["overview", "tunnels"].includes(page);
   if (page === "host") loadReport();
@@ -1773,8 +1774,8 @@ recoveryDialog.addEventListener("cancel", event => {
 });
 
 const updateCheck = $("#check-updates");
-const updateApply = $("#apply-update");
-const pendingUpdateKey = "paqet-pending-update";
+const quickUpdate = $("#quick-panel-update");
+const pendingUpdateKey = "paqet-update-base-revision";
 let updateModel;
 let updateLoading = false;
 let updateSubmitting = false;
@@ -1860,42 +1861,58 @@ function renderUpdates(model) {
   const {installed, check, installation, demo} = model;
   const checking = check.status === "checking";
   const running = installation.status === "running";
-  const available = check.status === "available" && check.latest !== installed && check.base === installed;
-  updateCheck.disabled = checking || running || updateSubmitting;
-  updateApply.hidden = !available || demo;
-  updateApply.disabled = checking || running || updateSubmitting;
-  updateCheck.classList.toggle("working", checking);
-  updateApply.classList.toggle("working", running);
+  const busy = checking || running || updateSubmitting;
+  updateCheck.disabled = busy;
+  updateCheck.setAttribute("aria-busy", String(busy));
+  updateCheck.classList.toggle("working", busy);
+  const buttonLabel = checking ? "در حال بررسی…" : running ? "در حال نصب…" :
+    demo ? "بررسی به‌روزرسانی" : "بررسی و نصب به‌روزرسانی";
+  if (updateCheck.textContent.trim() !== buttonLabel) labelButton(updateCheck, buttonLabel, busy ? "refresh" : "download");
+  $("#update-restart-note").textContent = demo ? "در نسخهٔ نمایشی می‌توانید تغییرات GitHub را بررسی کنید." :
+    "در صورت وجود نسخهٔ تازه، نصب فوراً شروع می‌شود و پنل دوباره راه‌اندازی می‌شود.";
   shortVersion($("#update-installed"), installed, "ثبت نشده");
   shortVersion($("#update-latest"), check.latest || (installation.status === "done" ? installed : null), "—");
   $("#update-checked").textContent = check.checked ? new Date(check.checked * 1000).toLocaleString("fa-IR") : "—";
-  const message = $("#update-status");
+
   const recentInstallError = installation.status === "error" &&
     (check.status === "idle" || installation.time >= check.checked);
-  message.classList.toggle("failed", check.status === "error" || recentInstallError);
-  if (running || installation.status === "done" && check.status === "idle" || recentInstallError) {
-    message.textContent = pullPhases[installation.phase] || "وضعیت نصب را دوباره بررسی کنید.";
-  } else if (checking) {
-    message.textContent = "در حال خواندن آخرین نسخه و تغییرات از GitHub…";
-  } else if (check.status === "error") {
-    message.textContent = check.error;
-  } else if (available) {
-    message.textContent = demo ? "نسخهٔ جدید در GitHub موجود است. نصب در حالت نمایشی غیرفعال است." : "نسخهٔ جدید آمادهٔ نصب است.";
+  const installedNow = installation.status === "done" && installation.revision === installed &&
+    (check.status === "idle" || installation.time >= check.checked);
+  let status = "idle";
+  let text = "برای بررسی نسخهٔ جدید، دکمهٔ بالا را بزنید.";
+  if (running) {
+    status = "working";
+    text = pullPhases[installation.phase] || "در حال نصب نسخهٔ جدید…";
+  } else if (checking || updateSubmitting) {
+    status = "working";
+    text = "در حال بررسی شاخهٔ main و دریافت تغییرات از GitHub…";
+  } else if (check.install_error || recentInstallError || check.status === "error") {
+    status = "error";
+    text = check.install_error || (recentInstallError ? pullPhases[installation.phase] : check.error) ||
+      "وضعیت به‌روزرسانی را دوباره بررسی کنید.";
+  } else if (installedNow) {
+    status = "ok";
+    text = "نسخهٔ جدید نصب شد.";
   } else if (check.status === "current") {
-    message.textContent = "پنل به‌روز است.";
-  } else {
-    message.textContent = "برای دیدن نسخه‌ها، به‌روزرسانی را بررسی کنید.";
+    status = "ok";
+    text = "پنل به‌روز است.";
+  } else if (check.status === "available" && demo) {
+    text = "نسخهٔ جدید در GitHub موجود است. نصب در حالت نمایشی غیرفعال است.";
+  }
+  const message = $("#update-status");
+  if (message.textContent !== text) message.textContent = text;
+  const feedback = message.parentElement;
+  if (feedback.dataset.state !== status) {
+    feedback.dataset.state = status;
+    $("#update-indicator").innerHTML = icon({working:"refresh", ok:"check", error:"alert", idle:"activity"}[status]);
   }
   renderChanges(model);
+
   try {
-    const pending = sessionStorage.getItem(pendingUpdateKey);
-    if (pending && pending === installation.revision && installation.status !== "running") {
+    const base = sessionStorage.getItem(pendingUpdateKey);
+    if (base && !busy) {
       sessionStorage.removeItem(pendingUpdateKey);
-      if (installation.status === "done" && pending === installed) location.reload();
-      else if (installation.status === "error") {
-        showError("#update-error", (pullPhases[installation.phase] || "نصب نسخه ناموفق بود.") +
-          " گزارش سرور در journalctl -u paqet-panel-update.service ثبت شده است.");
-      }
+      if (installedNow && base !== installed) location.reload();
     }
   } catch { /* status is still available without browser storage */ }
 }
@@ -1909,35 +1926,36 @@ async function loadUpdates() {
   } finally { updateLoading = false; }
 }
 
-updateCheck.onclick = async () => {
+async function startUpdate(openPage = false) {
+  if (updateSubmitting || updateModel?.check.status === "checking" || updateModel?.installation.status === "running") {
+    if (openPage) selectPage("updates");
+    return;
+  }
   updateSubmitting = true;
-  updateCheck.disabled = updateApply.disabled = true;
+  updateCheck.disabled = true;
+  if (openPage) {
+    selectPage("updates");
+    $("#update-status").focus();
+  }
   showError("#update-error");
-  try { updateModel = await api("updates", {action:"check"}); }
-  catch (error) { showError("#update-error", error.message); }
-  finally {
+  const message = $("#update-status");
+  message.textContent = "در حال بررسی به‌روزرسانی…";
+  try {
+    updateModel = await api("updates", {action:"check-and-install"});
+    if (!updateModel.demo) {
+      try { sessionStorage.setItem(pendingUpdateKey, updateModel.installed || "unknown"); }
+      catch { /* browser storage disabled */ }
+    }
+  } catch (error) {
+    showError("#update-error", error.message);
+  } finally {
     updateSubmitting = false;
     if (updateModel) renderUpdates(updateModel);
     else updateCheck.disabled = false;
   }
-};
+}
 
-updateApply.onclick = async () => {
-  const sha = updateModel?.check.latest;
-  if (!sha || updateSubmitting || !await confirmAction(
-    "پنل برای نصب نسخهٔ جدید دوباره راه‌اندازی می‌شود. اتصال‌های مدیریت‌شده در پنل ممکن است قطع شوند و برای دیدن نتیجه باید دوباره وارد شوید.",
-    {ok:"نصب نسخه"})) return;
-  updateSubmitting = true;
-  updateCheck.disabled = updateApply.disabled = true;
-  showError("#update-error");
-  try {
-    updateModel = await api("updates", {action:"apply", revision:sha});
-    try { sessionStorage.setItem(pendingUpdateKey, sha); } catch { /* browser storage disabled */ }
-  } catch (error) { showError("#update-error", error.message); }
-  finally {
-    updateSubmitting = false;
-    if (updateModel) renderUpdates(updateModel);
-  }
-};
+updateCheck.onclick = () => startUpdate();
+quickUpdate.onclick = () => startUpdate(true);
 
 setInterval(() => { if (!document.hidden) loadUpdates(); }, 3000);

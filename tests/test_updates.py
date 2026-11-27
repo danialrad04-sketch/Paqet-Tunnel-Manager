@@ -36,6 +36,30 @@ class UpdateApprovalTest(unittest.TestCase):
                 manager.apply(TARGET)
 
 
+    def test_one_click_installs_only_when_a_new_revision_is_available(self):
+        for newest, demo in ((TARGET, False), (BASE, False), (TARGET, True)):
+            with self.subTest(newest=newest, demo=demo), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                (directory / "revision").write_text(BASE + "\n")
+                manager = updates.Updates(directory, demo)
+                with patch.object(updates.threading, "Thread") as thread:
+                    manager.start_check(install=True)
+                    manager.start_check(install=True)
+                self.assertEqual(thread.call_count, 1)
+                with patch.object(updates, "get_commits", return_value=[{"sha": newest}, {"sha": BASE}]):
+                    with patch.object(relay.p, "run") as launch:
+                        thread.call_args.kwargs["target"]()
+                if newest == TARGET and not demo:
+                    self.assertEqual(launch.call_args.args[-2:], (TARGET, BASE))
+                    self.assertEqual(manager.installation()["status"], "running")
+                    (directory / "revision").write_text(TARGET + "\n")
+                    restarted = updates.Updates(directory).view()
+                    self.assertEqual(restarted["check"]["status"], "current")
+                    self.assertEqual(restarted["check"]["changes"], [{"sha": TARGET}])
+                else:
+                    launch.assert_not_called()
+
+
 @unittest.skipUnless(shutil.which("git") and shutil.which("flock"), "git and flock are required")
 class UpdateWorkerTest(unittest.TestCase):
     def test_install_success_and_rollback_after_failed_install(self):
