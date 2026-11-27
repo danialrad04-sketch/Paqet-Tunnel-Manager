@@ -7,13 +7,14 @@
 <meta name="theme-color" content="#09090b">
 <title>Paqet · میز کار</title>
 <link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=adaptive-paths">
-<script src="/app.js?v=adaptive-paths" defer></script>
+<link rel="stylesheet" href="/styles.css?v=classic-panel">
+<script src="/app.js?v=classic-panel" defer></script>
 </head>
 <body>
 
 <!-- ───────────── Login ───────────── -->
 <div id="login" class="login" hidden>
+  <div class="login-grid" aria-hidden="true"></div>
   <form id="login-form" class="card login-card">
     <div class="brand"><span class="brand-mark" data-icon="tunnel"></span><span class="brand-text"><strong>Paqet</strong><small>مدیریت تونل</small></span></div>
     <div class="login-copy">
@@ -35,6 +36,7 @@
       <div class="brand"><span class="brand-mark" data-icon="tunnel"></span><span class="brand-text"><strong>Paqet</strong><small>مدیریت تونل</small></span></div>
       <button id="menu-close" class="btn ghost icon only-mobile" type="button" aria-label="بستن منو"><span data-icon="close"></span></button>
     </div>
+    <div class="nav-label">فضای کاری</div>
     <nav aria-label="بخش‌های پنل">
       <button data-page="overview" class="selected" aria-current="page"><span data-icon="grid"></span>نمای کلی</button>
       <button data-page="tunnels"><span data-icon="route"></span>تونل‌ها<span id="nav-count" class="nav-count" hidden></span></button>
@@ -69,28 +71,25 @@
     </header>
 
     <div class="content">
+      <!-- Hero: the tunnel path itself -->
       <section id="hero" class="hero card" aria-labelledby="overview-title">
         <div class="hero-copy">
-          <h1 id="overview-title">وضعیت تونل‌ها</h1>
-          <div class="hero-meta"><b id="hero-region">موقعیت تعیین نشده</b><span id="hero-topology">در حال شناسایی نقش میزبان…</span></div>
+          <span class="chip"><span class="chip-dot"></span><b id="hero-region">موقعیت تعیین نشده</b></span>
+          <h1 id="overview-title">مرکز عملیات شبکه</h1>
+          <p id="hero-topology">در حال خواندن نقش‌های Paqet از تنظیمات میزبان…</p>
           <div class="hero-actions">
             <button class="btn primary" data-create><span data-icon="plus"></span>تونل جدید</button>
+            <button class="btn outline" type="button" data-open-receiver>گواهی خودکار</button>
             <button class="btn outline" id="setup-help">راهنمای اتصال</button>
-          </div>
-          <div class="hero-shortcuts">
-            <button class="btn ghost sm" type="button" data-open-receiver><span data-icon="key"></span>گواهی خودکار</button>
-            <button class="btn ghost sm" data-page-link="host"><span data-icon="server"></span>وضعیت میزبان</button>
+            <button class="btn outline" data-page-link="host"><span data-icon="server"></span>وضعیت میزبان</button>
           </div>
         </div>
-        <div class="path-viz" role="group" aria-labelledby="path-title">
-          <div class="path-heading"><h2 id="path-title">مسیر Paqet</h2><button class="btn ghost sm" type="button" data-page-link="relays"><span data-icon="radar"></span>پایش مسیرها</button></div>
-          <div class="path-nodes">
-            <div class="node node-local"><span class="node-icon" data-icon="server"></span><b>این میزبان</b><small id="path-local" dir="auto">—</small></div>
-            <span class="wire" aria-hidden="true"></span>
-            <div class="node node-tunnel"><span class="node-icon" data-icon="tunnel"></span><b>Paqet</b><small id="path-count">—</small></div>
-            <span class="wire" aria-hidden="true"></span>
-            <div class="node node-remote"><span class="node-icon" data-icon="globe"></span><b>همتا</b><small id="path-remote" dir="auto">—</small></div>
-          </div>
+        <div class="path-viz" role="group" aria-label="مسیر Paqet">
+          <div class="node node-local"><span class="node-icon" data-icon="server"></span><b>این میزبان</b><small id="path-local">—</small></div>
+          <div class="wire" aria-hidden="true"><i></i><i></i><i></i><span class="wire-label">KCP · raw socket</span></div>
+          <button class="node node-tunnel node-link" type="button" data-page-link="relays" aria-label="پایش مسیرها"><span class="node-icon" data-icon="tunnel"></span><b>Paqet</b><small id="path-count">—</small></button>
+          <div class="wire" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="node node-remote"><span class="node-icon" data-icon="globe"></span><b>همتا</b><small id="path-remote">—</small></div>
         </div>
       </section>
 
@@ -100,12 +99,12 @@
         <button id="show-failed" class="btn outline sm">مشاهدهٔ تونل‌ها</button>
       </section>
 
-      <dl id="metrics" class="card metrics" aria-label="تعداد تونل‌ها به تفکیک وضعیت">
-        <div class="metric"><dt>همهٔ تونل‌ها</dt><dd id="total">—</dd></div>
-        <div class="metric ok"><dt>فعال</dt><dd id="active">—</dd></div>
-        <div class="metric warn"><dt>متوقف</dt><dd id="inactive">—</dd></div>
-        <div class="metric bad"><dt>ناموفق</dt><dd id="failed">—</dd></div>
-      </dl>
+      <div id="metrics" class="metrics">
+        <article class="card metric"><div class="metric-head"><span>همهٔ تونل‌ها</span><span class="metric-icon" data-icon="route"></span></div><strong id="total">—</strong><small class="muted">سرویس ثبت‌شده روی میزبان</small></article>
+        <article class="card metric ok"><div class="metric-head"><span>فعال</span><span class="metric-icon" data-icon="activity"></span></div><strong id="active">—</strong><small class="muted">سرویس در حال اجرا</small></article>
+        <article class="card metric warn"><div class="metric-head"><span>متوقف</span><span class="metric-icon" data-icon="pause"></span></div><strong id="inactive">—</strong><small class="muted">آمادهٔ شروع</small></article>
+        <article class="card metric bad"><div class="metric-head"><span>ناموفق</span><span class="metric-icon" data-icon="alert"></span></div><strong id="failed">—</strong><small class="muted">نیاز به بررسی گزارش</small></article>
+      </div>
 
       <section id="telemetry" class="card telemetry">
         <div class="card-head">

@@ -272,7 +272,7 @@ function render() {
     };
     const identity = cell(row, "", "button");
     identity.type = "button";
-    identity.className = "identity";
+    identity.className = "identity " + (tunnel.role || "");
     identity.setAttribute("aria-label", "باز کردن تونل " + tunnel.name);
     identity.onclick = () => openDetails(tunnel.name);
     const mark = iconElement(tunnel.role === "server" ? "server" : "route", "identity-mark");
