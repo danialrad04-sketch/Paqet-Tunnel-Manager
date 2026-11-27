@@ -1032,7 +1032,8 @@ class Panel(BaseHTTPRequestHandler):
                 self.send_data(200, (STATIC / "fonts" / FONTS[path]).read_bytes(), "font/woff2",
                                cache="public, max-age=2592000, immutable")
             elif method == "GET" and path == "/api/session":
-                self.answer(200, {"authenticated": self.authenticated(), "demo": manager.demo})
+                self.answer(200, {"authenticated": self.authenticated(), "demo": manager.demo,
+                                  "features": {"receiver_acme": True}})
             elif method == "POST" and path == "/api/login":
                 self.login()
             elif path.startswith("/api/") and not self.authenticated():

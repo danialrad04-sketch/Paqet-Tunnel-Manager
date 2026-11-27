@@ -1209,6 +1209,7 @@ function updateRelayForm() {
   $("#receiver-fields").hidden = !receiver;
   $("#entry-fields").hidden = receiver;
   domain.required = target.required = receiver;
+  $("#relay-title").textContent = receiver ? "گیرنده و گواهی TLS" : "تنظیم مسیر TCP";
   const http = !receiver && ["http", "https"].includes(probe.value);
   probe_host.disabled = probe_path.disabled = !http;
   probe_host.required = http;
@@ -1223,8 +1224,15 @@ function updateRelayForm() {
     : ["اتصال کاربر", listen.value || "ورودی ایران", hops[route.value] || routeNames[route.value], "سرویس روی خارج"].join(" → ");
 }
 
-function openRelay(row) {
+function updateQuicOptions() {
+  relayForm.elements.transport.querySelector('[value="quic"]').disabled = !quicAvailable;
+  relayForm.elements.selected.querySelector('[value="quic"]').disabled = !quicAvailable;
+  $("#quic-profile").disabled = !quicAvailable;
+}
+
+function openRelay(row, role = "entry") {
   relayForm.reset();
+  relayForm.elements.role.value = role;
   relayProfile = quicProfile = undefined;
   storedQuicPeer = Boolean(row?.has_quic_peer);
   $("#quic-profile-status").textContent = storedQuicPeer ? "فایل قبلی حفظ می‌شود." : "اختیاری";
@@ -1238,15 +1246,19 @@ function openRelay(row) {
   relayForm.elements.name.readOnly = Boolean(row);
   relayForm.elements.role.disabled = Boolean(row);
   relayForm.elements.transport.disabled = Boolean(row);
-  relayForm.elements.transport.querySelector('[value="quic"]').disabled = !quicAvailable;
-  relayForm.elements.selected.querySelector('[value="quic"]').disabled = !quicAvailable;
-  $("#quic-profile").disabled = !quicAvailable;
+  updateQuicOptions();
   showError("#relay-form-error");
   updateRelayForm();
   $("#relay-dialog").showModal();
 }
 
 $("#add-relay").onclick = () => openRelay();
+for (const button of document.querySelectorAll("[data-open-receiver]")) {
+  button.onclick = () => {
+    if (currentPage !== "relays") selectPage("relays");
+    openRelay(undefined, "receiver");
+  };
+}
 relayForm.oninput = updateRelayForm;
 for (const [selector, kind] of [["#relay-profile", "https"], ["#quic-profile", "quic"]]) {
   $(selector).onchange = async event => {
@@ -1384,6 +1396,7 @@ async function loadRelays() {
   try {
     const data = await api("relays");
     quicAvailable = data.quic;
+    updateQuicOptions();
     $("#quic-install-hint").hidden = quicAvailable;
     const job = data.certificate_job;
     const progress = $("#certificate-job");

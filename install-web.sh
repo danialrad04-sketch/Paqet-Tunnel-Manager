@@ -169,14 +169,18 @@ systemctl is-active --quiet paqetpanel.service
 ready=
 for attempt in {1..10}; do
     if curl --noproxy '*' -fsS --max-time 2 http://127.0.0.1:8765/api/session 2>/dev/null |
-        /usr/bin/python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(s.get("demo") is not False or s.get("authenticated") is not False)' 2>/dev/null; then
+        /usr/bin/python3 -c 'import json,sys; s=json.load(sys.stdin); sys.exit(not (s.get("demo") is False and s.get("authenticated") is False and s.get("features", {}).get("receiver_acme") is True))' 2>/dev/null &&
+        curl --noproxy '*' -fsS --max-time 2 -o "$staging/served.html" http://127.0.0.1:8765/ 2>/dev/null &&
+        curl --noproxy '*' -fsS --max-time 2 -o "$staging/served.js" http://127.0.0.1:8765/app.js 2>/dev/null &&
+        cmp -s "$staging/served.html" "$source_dir/web/static/index.html" &&
+        cmp -s "$staging/served.js" "$source_dir/web/static/app.js"; then
         ready=yes
         break
     fi
     sleep 1
 done
 if [[ -z $ready ]]; then
-    echo 'Panel HTTP check failed. See journalctl -u paqetpanel.service -n 30.' >&2
+    echo 'The latest panel API or interface is not being served on port 8765. See journalctl -u paqetpanel.service -n 30.' >&2
     exit 1
 fi
 if [[ -f /etc/paqet-panel/http.env ]] &&
