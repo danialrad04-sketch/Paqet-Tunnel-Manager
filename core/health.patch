@@ -1,0 +1,187 @@
+diff --git a/cmd/health/health.go b/cmd/health/health.go
+new file mode 100644
+index 0000000..01d5018
+--- /dev/null
++++ b/cmd/health/health.go
+@@ -0,0 +1,115 @@
++package health
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net"
++	"sync"
++	"time"
++
++	"github.com/spf13/cobra"
++
++	"paqet/internal/conf"
++	"paqet/internal/flog"
++	"paqet/internal/protocol"
++	"paqet/internal/tnet/kcp"
++)
++
++type sample struct {
++	OK        bool   `json:"ok"`
++	ElapsedMS *int64 `json:"elapsed_ms,omitempty"`
++	Failure   string `json:"failure,omitempty"`
++}
++
++func exchange(stream net.Conn, timeout time.Duration) sample {
++	start := time.Now()
++	if err := stream.SetDeadline(start.Add(timeout)); err != nil {
++		return sample{Failure: "stream"}
++	}
++	request := protocol.Proto{Type: protocol.PPING}
++	err := request.Write(stream)
++	if err == nil {
++		var response protocol.Proto
++		err = response.Read(stream)
++		if err == nil && response.Type != protocol.PPONG {
++			return sample{Failure: "unexpected_response"}
++		}
++	}
++	if err != nil {
++		var networkError net.Error
++		if errors.As(err, &networkError) && networkError.Timeout() {
++			return sample{Failure: "timeout"}
++		}
++		return sample{Failure: "stream"}
++	}
++	elapsed := time.Since(start).Milliseconds()
++	return sample{OK: true, ElapsedMS: &elapsed}
++}
++
++// Cmd measures round trips over Paqet's existing KCP and smux protocol.
++var Cmd = newCommand()
++
++func newCommand() *cobra.Command {
++	var configPath string
++	var count, timeoutMS int
++	cmd := &cobra.Command{
++		Use:          "health",
++		Short:        "Check for a reply from the configured Paqet peer over KCP",
++		Args:         cobra.NoArgs,
++		SilenceUsage: true,
++		RunE: func(cmd *cobra.Command, args []string) error {
++			if count < 1 || count > 5 || timeoutMS < 100 || timeoutMS > 5000 {
++				return fmt.Errorf("count must be 1–5 and timeout-ms must be 100–5000")
++			}
++			// Keep stdout reserved for the JSON report.
++			flog.SetLevel(int(flog.None))
++			cfg, err := conf.LoadFromFile(configPath)
++			if err != nil {
++				return fmt.Errorf("load configuration: %w", err)
++			}
++			if cfg.Role != "client" {
++				return fmt.Errorf("health requires client configuration")
++			}
++
++			timeout := time.Duration(timeoutMS) * time.Millisecond
++			ctx, cancel := context.WithTimeout(cmd.Context(), time.Duration(count)*timeout+time.Second)
++			defer cancel()
++			network := cfg.Network
++			network.Port = 0 // Use a separate source port from a running client service.
++			connection, err := kcp.Dial(cfg.Server.Addr, cfg.Transport.KCP, network)
++			if err != nil {
++				return fmt.Errorf("open probe connection: %w", err)
++			}
++			var closeOnce sync.Once
++			closeConnection := func() { closeOnce.Do(func() { _ = connection.Close() }) }
++			stop := context.AfterFunc(ctx, closeConnection)
++			defer closeConnection()
++			defer stop()
++
++			results := make([]sample, 0, count)
++			for range count {
++				if ctx.Err() != nil {
++					results = append(results, sample{Failure: "deadline"})
++					continue
++				}
++				stream, err := connection.OpenStrm()
++				if err != nil {
++					results = append(results, sample{Failure: "stream"})
++					continue
++				}
++				results = append(results, exchange(stream, timeout))
++				_ = stream.Close()
++			}
++			return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
++				Schema  string   `json:"schema"`
++				Samples []sample `json:"samples"`
++			}{"paqet-health-v1", results})
++		},
++	}
++	cmd.Flags().StringVarP(&configPath, "config", "c", "config.yaml", "Path to the client configuration")
++	cmd.Flags().IntVar(&count, "count", 3, "Number of request/reply tests")
++	cmd.Flags().IntVar(&timeoutMS, "timeout-ms", 1500, "Maximum time per request, in milliseconds")
++	return cmd
++}
+diff --git a/cmd/health/health_test.go b/cmd/health/health_test.go
+new file mode 100644
+index 0000000..17d11f8
+--- /dev/null
++++ b/cmd/health/health_test.go
+@@ -0,0 +1,52 @@
++package health
++
++import (
++	"net"
++	"testing"
++	"time"
++
++	"paqet/internal/protocol"
++)
++
++func TestExchange(t *testing.T) {
++	for _, scenario := range []struct {
++		name    string
++		reply   bool
++		healthy bool
++		failure string
++	}{
++		{name: "pong", reply: true, healthy: true},
++		{name: "unexpected", reply: true, failure: "unexpected_response"},
++		{name: "silence", failure: "timeout"},
++	} {
++		t.Run(scenario.name, func(t *testing.T) {
++			client, peer := net.Pipe()
++			defer client.Close()
++			done := make(chan struct{})
++			go func() {
++				defer close(done)
++				defer peer.Close()
++				var request protocol.Proto
++				if err := request.Read(peer); err != nil {
++					return
++				}
++				if !scenario.reply {
++					var ignored [1]byte
++					_, _ = peer.Read(ignored[:])
++					return
++				}
++				response := protocol.Proto{Type: protocol.PPING}
++				if scenario.healthy {
++					response.Type = protocol.PPONG
++				}
++				_ = response.Write(peer)
++			}()
++			result := exchange(client, 100*time.Millisecond)
++			_ = client.Close()
++			<-done
++			if result.OK != scenario.healthy || result.Failure != scenario.failure {
++				t.Errorf("exchange returned %+v", result)
++			}
++		})
++	}
++}
+diff --git a/cmd/main.go b/cmd/main.go
+index d6fbea7..08da0b8 100644
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -8,0 +9 @@ import (
++	"paqet/cmd/health"
+@@ -24,0 +26 @@ func main() {
++	rootCmd.AddCommand(health.Cmd)

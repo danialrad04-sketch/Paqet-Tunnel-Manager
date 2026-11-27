@@ -11,6 +11,7 @@ import math
 import re
 import secrets
 import ssl
+from statistics import median
 import threading
 import time
 
@@ -21,6 +22,41 @@ try:
     import quic_transport
 except ImportError:
     quic_transport = None
+
+
+QUALITY_WINDOW = 5
+QUALITY_CONFIRMATIONS = 3
+QUALITY_HOLD = 120
+
+
+def route_policy(config):
+    return config.get("policy") or ("failover" if config.get("automatic") is True else "manual")
+
+
+def route_quality(history, routes):
+    summary = {}
+    for route in routes:
+        samples = [point["tests"][route] for point in history[-QUALITY_WINDOW:] if route in point["tests"]]
+        latencies = [point["ms"] for point in samples if point["ok"]]
+        summary[route] = {"samples": len(samples), "successes": len(latencies),
+                          "median_ms": round(median(latencies)) if latencies else None}
+    return summary
+
+
+def adaptive_candidate(quality, tests, selected):
+    current = quality[selected]
+    if current["samples"] < QUALITY_WINDOW or current["median_ms"] is None:
+        return None
+    candidates = []
+    for route, result in quality.items():
+        if (route == selected or result["samples"] < QUALITY_WINDOW or result["successes"] < 4
+                or not tests[route]["ok"] or tests[route]["streak"] < 3):
+            continue
+        faster = result["median_ms"] <= min(current["median_ms"] - 40, current["median_ms"] * .75)
+        more_reliable = result["successes"] - current["successes"] >= 2
+        if more_reliable or faster and result["successes"] >= current["successes"]:
+            candidates.append(route)
+    return min(candidates, key=lambda route: (-quality[route]["successes"], quality[route]["median_ms"]), default=None)
 
 
 def month():
@@ -252,10 +288,15 @@ class Relay:
                 path = data.get("probe_path") or "/"
                 if not isinstance(path, str) or not re.fullmatch(r"/[!-~]{0,1023}", path):
                     raise p.Problem("مسیر HTTP باید با / آغاز شود و فاصله نداشته باشد.")
-            if data.get("automatic") and probe == "tcp":
+            policy = route_policy(data)
+            if policy not in ("manual", "failover", "adaptive"):
+                raise p.Problem("سیاست انتخاب مسیر معتبر نیست.")
+            if policy != "manual" and probe == "tcp":
                 raise p.Problem("جابه‌جایی خودکار به آزمون لایهٔ برنامه نیاز دارد.")
+            if policy == "adaptive" and sum(bool(route) for route in (primary, alternate, quic, backup)) < 2:
+                raise p.Problem("انتخاب هوشمند به دست‌کم دو مسیر تنظیم‌شده نیاز دارد.")
             config.update(primary=primary, peer=alternate, quic_peer=quic, backup=backup, selected=selected, probe=probe,
-                          probe_host=probe_host, probe_path=path, automatic=data.get("automatic") is True,
+                          probe_host=probe_host, probe_path=path, policy=policy, automatic=policy != "manual",
                           budget=p.number(data.get("budget") or 0, 0, 999999, "سقف GiB"))
             for upstream in (primary, backup):
                 if upstream and upstream[1] == self.panel_port:
@@ -400,7 +441,7 @@ class Relay:
         self.configs = updated
         self.runtime.pop(name, None)
         if not old or any(old.get(key) != new.get(key) for key in
-                          ("peer", "quic_peer", "primary", "backup", "probe", "probe_host", "probe_path", "selected", "automatic")):
+                          ("peer", "quic_peer", "primary", "backup", "probe", "probe_host", "probe_path", "selected", "policy", "automatic")):
             if self.last_switch.pop(name, None):
                 self.persist_switch()
             self.history.pop(name, None)
@@ -562,7 +603,7 @@ class Relay:
     def active_route(self, config):
         record = self.last_switch.get(config["name"], {})
         route = record.get("selected")
-        if config.get("automatic") and record.get("preferred") == config.get("selected") and route in self.routes(config):
+        if route_policy(config) != "manual" and record.get("preferred") == config.get("selected") and route in self.routes(config):
             return route
         return config.get("selected")
 
@@ -581,18 +622,43 @@ class Relay:
             previous = record["tests"].get(route, {})
             streak = (previous.get("streak", 0) if previous.get("ok") == result["ok"] else 0) + 1
             record["tests"][route] = {**result, "time": now, "streak": streak}
-        current = record["tests"][selected]
-        if config["automatic"] and not current["ok"] and current["streak"] >= 2:
-            for route in routes:
-                test = record["tests"][route]
-                if route != selected and test["ok"] and test["streak"] >= 2:
-                    self.last_switch[name] = {"selected": route, "preferred": config["selected"], "switched": now}
-                    self.persist_switch()
-                    selected = route
-                    break
         history = self.history[name]
-        history.append({"time": now, "tests": record["tests"].copy(), "selected": selected})
+        tests = record["tests"].copy()
+        point = {"time": now, "tests": tests, "selected": selected}
+        history.append(point)
         del history[:-120]
+        quality = record["quality"] = route_quality(history, routes)
+        policy = route_policy(config)
+        if policy == "manual":
+            return
+        current = tests[selected]
+        if not current["ok"] and current["streak"] >= 2:
+            eligible = [route for route in routes if route != selected and tests[route]["ok"] and tests[route]["streak"] >= 2]
+            if eligible:
+                if policy == "adaptive":
+                    eligible.sort(key=lambda route: (-quality[route]["successes"], quality[route]["median_ms"]))
+                point["selected"] = self.switch_route(config, eligible[0], now, "failure")
+                record.pop("candidate", None)
+                return
+        if policy != "adaptive" or not current["ok"] or now - self.last_switch.get(name, {}).get("switched", 0) < QUALITY_HOLD:
+            record.pop("candidate", None)
+            return
+        candidate = adaptive_candidate(quality, tests, selected)
+        if candidate is None:
+            record.pop("candidate", None)
+            return
+        previous, confirmations = record.get("candidate", (None, 0))
+        confirmations = confirmations + 1 if previous == candidate else 1
+        record["candidate"] = (candidate, confirmations)
+        if confirmations >= QUALITY_CONFIRMATIONS:
+            point["selected"] = self.switch_route(config, candidate, now, "quality")
+            record.pop("candidate", None)
+
+    def switch_route(self, config, route, now, reason):
+        self.last_switch[config["name"]] = {"selected": route, "preferred": config["selected"],
+                                            "switched": now, "reason": reason}
+        self.persist_switch()
+        return route
 
     def reload_certificates(self):
         for name, context in {**self.contexts, **self.quic_contexts}.items():
@@ -673,8 +739,7 @@ class Relay:
         self.save("relays.json", updated)
         self.configs = updated
         self.runtime.pop(name, None)
-        self.last_switch[name] = {"selected": route, "preferred": route, "switched": int(time.time())}
-        self.persist_switch()
+        self.switch_route(updated[name], route, int(time.time()), "manual")
 
     def persist_switch(self):
         try:
@@ -696,7 +761,9 @@ class Relay:
                          "routes": self.routes(config),
                          "configured": config.get("selected"),
                          "selected": self.active_route(config),
-                         "tests": record.get("tests", {}), "switched": self.last_switch.get(name, {}).get("switched"),
+                         "tests": record.get("tests", {}), "quality": record.get("quality", {}),
+                         "policy": route_policy(config), "switched": self.last_switch.get(name, {}).get("switched"),
+                         "switch_reason": self.last_switch.get(name, {}).get("reason"),
                          "online": name in self.servers, "connections": self.connections[name],
                          "month": period, "bytes": used,
                          "projected_days": round(budget / used * (now.day - 1 + now.hour / 24), 1)

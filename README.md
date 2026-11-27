@@ -45,6 +45,8 @@ curl -fsSL https://raw.githubusercontent.com/danialrad04-sketch/Paqet-Tunnel-Man
 
 The bootstrap downloads the panel files from GitHub and installs the checksum-verified Paqet core on amd64 or arm64 if needed. From a local checkout, use `sudo bash install-web.sh`. It discovers existing Paqet services, provisions server and client tunnels individually or from a JSON batch, controls systemd services, edits KCP settings, and displays journal logs. See the [Persian installation guide](README.fa.md#پنل-وب-paqet) for SSH access, core installation and examples.
 
+**Adaptive routing** keeps the same incoming listener and uses recent application probes to pick a healthier or consistently faster path for new connections. The optional `core/build-health.sh` builds a patched upstream Paqet executable that measures KCP request/reply timings with its existing protocol. Install it as `/usr/local/bin/paqet-health` to expose the native test in client details.
+
 **Panel updates** are checked and installed with one click from the web interface. The panel lists recent commits from GitHub's main branch, verifies the selected revision again before installation, and restores its previous application files if installation fails. The update restarts the panel and may interrupt managed relay connections.
 
 **Client recovery** exports an encrypted bundle for one IPv4 Paqet client. On a replacement host, import it from the tunnel inventory, review the detected network and listener checks, and create a service pointed at the same overseas server. Keep the bundle and recovery phrase separately. DNS, firewall rules, and managed relay listeners are configured separately.

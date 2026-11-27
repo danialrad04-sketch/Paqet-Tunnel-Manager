@@ -849,6 +849,7 @@ function renderDetails() {
   }
   $("#probe-section").hidden = tunnel.role !== "client" || tunnel.state !== "active" || !listeners.length;
   if ($("#probe-section").hidden) clearProbe();
+  $("#core-probe-section").hidden = tunnel.role !== "client" || !tunnel.editable || !latestOverview?.core_probe;
   $("#diagnostic").hidden = !registered || tunnel.role !== "client" || !tunnel.endpoint;
   const facts = $("#detail-facts");
   facts.replaceChildren();
@@ -938,6 +939,7 @@ tuning.addEventListener("toggle", () => {
 function openDetails(name) {
   selected = name;
   $("#route-result").textContent = "";
+  $("#core-probe-result").textContent = "";
   $("#archive-control").open = false;
   $("#archive-form").reset();
   tuning.open = false;
@@ -993,6 +995,29 @@ $("#refresh-network").onclick = async () => {
     toast("تنظیمات شبکه به‌روزرسانی شد.");
   } catch (error) { if (selected === name) showError("#detail-error", error.message); }
   finally { button.disabled = false; }
+};
+$("#core-probe").onclick = async () => {
+  const name = selected;
+  const button = $("#core-probe");
+  const output = $("#core-probe-result");
+  button.disabled = true;
+  output.textContent = "در حال گرفتن پاسخ از همتای Paqet…";
+  try {
+    const result = await api("tunnels/" + name + "/core-probe", {});
+    if (selected !== name) return;
+    if (result.demo) {
+      output.textContent = "آزمون هسته در حالت نمایشی اجرا نمی‌شود.";
+      return;
+    }
+    const replies = result.samples.filter(sample => sample.ok);
+    const elapsed = replies.map(sample => sample.elapsed_ms).join("، ");
+    output.textContent = digits.format(replies.length) + " پاسخ از " + digits.format(result.samples.length) +
+      (elapsed ? " · زمان رفت‌وبرگشت " + elapsed + " ms" : " · پاسخی از همتا دریافت نشد.");
+  } catch (error) {
+    if (selected === name) output.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 };
 $("#check-route").onclick = async () => {
   const name = selected;
@@ -1267,6 +1292,12 @@ $("#probe-live").onchange = () => { if ($("#probe-live").checked) probe(); };
 setInterval(() => { if (!document.hidden && $("#probe-live").checked) probe(); }, 30000);
 
 const relayForm = $("#relay-form");
+const policyNames = {manual:"دستی", failover:"جابه‌جایی پس از خرابی", adaptive:"انتخاب هوشمند"};
+const policyHints = {
+  manual:"مسیر اتصال‌های جدید را از کارت مسیر انتخاب کنید.",
+  failover:"با دو خرابی پیاپی، اتصال‌های جدید به مسیر سالم منتقل می‌شوند.",
+  adaptive:"با آزمون‌های پیاپی، مسیر کند یا ناپایدار جای خود را به گزینهٔ بهتر می‌دهد. دست‌کم دو مسیر و آزمون TLS یا HTTP(S) لازم است.",
+};
 const routeNames = {paqet:"Paqet", https:"HTTPS", quic:"QUIC", standby:"Paqet آماده‌به‌کار"};
 let relayProfile, quicProfile, storedRelayPeer, storedQuicPeer, relayLoading = false;
 let quicAvailable;
@@ -1302,8 +1333,10 @@ function updateRelayForm() {
   const http = !receiver && ["http", "https"].includes(probe.value);
   probe_host.disabled = probe_path.disabled = !http;
   probe_host.required = http;
-  relayForm.elements.automatic.disabled = !receiver && probe.value === "tcp";
-  if (relayForm.elements.automatic.disabled) relayForm.elements.automatic.checked = false;
+  const policy = relayForm.elements.policy;
+  policy.disabled = receiver || probe.value === "tcp";
+  $("#route-policy-hint").textContent = probe.value === "tcp" ?
+    "برای جابه‌جایی خودکار آزمون TLS یا HTTP(S) را انتخاب کنید." : policyHints[policy.value];
   const peer = relayProfile ? relayProfile.domain + ":" + relayProfile.port : storedRelayPeer ? "گیرندهٔ HTTPS ثبت‌شده" : "فایل گیرنده";
   const quic = quicProfile ? quicProfile.domain + ":" + quicProfile.port : storedQuicPeer ? "گیرندهٔ QUIC ثبت‌شده" : "فایل گیرندهٔ QUIC";
   for (const [field, kind, profile, stored] of [["#relay-profile", "https", relayProfile, storedRelayPeer],
@@ -1345,7 +1378,7 @@ function openRelay(row, {role = "entry", method} = {}) {
     if (row?.[key] !== undefined) relayForm.elements[key].value = socketLabel(row[key]) || relayForm.elements[key].value;
   }
   relayForm.elements.selected.value = row?.configured || method || "paqet";
-  relayForm.elements.automatic.checked = Boolean(row?.automatic);
+  relayForm.elements.policy.value = row?.policy || (row?.automatic ? "failover" : "manual");
   relayForm.elements.name.readOnly = Boolean(row);
   relayForm.elements.role.disabled = Boolean(row);
   relayForm.elements.transport.disabled = Boolean(row);
@@ -1391,7 +1424,7 @@ relayForm.onsubmit = async (event) => {
   try {
     const fields = relayForm.elements;
     const result = await api("relays", {...Object.fromEntries(new FormData(relayForm)), action:"save",
-      role:fields.role.value, automatic:fields.automatic.checked,
+      role:fields.role.value, policy:fields.policy.disabled ? "manual" : fields.policy.value,
       issue_certificate:fields.role.value === "receiver" && fields.issue_certificate.checked,
       transport:relayForm.elements.transport.value,
       peer:relayProfile, keep_peer:storedRelayPeer, quic_peer:quicProfile, keep_quic_peer:storedQuicPeer});
@@ -1451,8 +1484,11 @@ function relayCard(row, demo) {
     }
     listButton(actions, "دریافت فایل اتصال", () => operateRelay(row, "profile"));
   } else {
-    addRelayInfo(body, "مسیر فعال", routeNames[row.selected] + (row.automatic ? " · جابه‌جایی خودکار" : ""));
-    if (row.switched) addRelayInfo(body, "آخرین جابه‌جایی", new Date(row.switched * 1000).toLocaleString("fa-IR"));
+    addRelayInfo(body, "مسیر فعال", routeNames[row.selected] + " · " + (policyNames[row.policy] || policyNames.manual));
+    if (row.switched) {
+      const reason = {failure:"خرابی مسیر", quality:"بهبود پایدار کیفیت", manual:"انتخاب دستی"}[row.switch_reason];
+      addRelayInfo(body, "آخرین جابه‌جایی", new Date(row.switched * 1000).toLocaleString("fa-IR") + (reason ? " · " + reason : ""));
+    }
     const used = (row.bytes / 1073741824).toFixed(3);
     const forecast = row.projected_days == null ? "" : row.projected_days <= new Date().getUTCDate()
       ? " · با نرخ فعلی در محدودهٔ روز جاری یا زودتر" : " · برآورد روز " + digits.format(Math.ceil(row.projected_days)) + " از ابتدای دوره";
@@ -1467,6 +1503,11 @@ function relayCard(row, demo) {
       const status = result ? (result.ok ? result.ms + " ms" : "خطا") + " · " +
         new Date(result.time * 1000).toLocaleTimeString("fa-IR") : "در انتظار پایش";
       const entry = listEntry(list, routeNames[route], status);
+      entry.classList.toggle("active-route", row.selected === route);
+      const quality = row.quality?.[route];
+      if (quality && row.policy === "adaptive") addRelayInfo(entry, "کیفیت اخیر",
+        digits.format(quality.successes) + " پاسخ از " + digits.format(quality.samples) + " آزمون" +
+        (quality.median_ms == null ? "" : " · میانهٔ پاسخ " + quality.median_ms + " ms"));
       if (comparison) addRelayInfo(entry, "مقایسه", comparison.ok + "/" + comparison.total + " پاسخ · " +
         (comparison.p50_ms == null ? "—" : comparison.p50_ms + " ms") + " · بار آزمون " + comparison.load_bytes + " B");
       if (row.selected !== route) listButton(entry, "اعمال برای اتصال‌های جدید", () => operateRelay(row, "select", {route}));

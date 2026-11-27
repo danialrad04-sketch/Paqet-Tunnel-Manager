@@ -7,8 +7,8 @@
 <meta name="theme-color" content="#09090b">
 <title>Paqet · میز کار</title>
 <link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=responsive-panel">
-<script src="/app.js?v=responsive-panel" defer></script>
+<link rel="stylesheet" href="/styles.css?v=adaptive-paths">
+<script src="/app.js?v=adaptive-paths" defer></script>
 </head>
 <body>
 
@@ -83,7 +83,7 @@
           </div>
         </div>
         <div class="path-viz" role="group" aria-labelledby="path-title">
-          <div class="path-heading"><h2 id="path-title">مسیر Paqet</h2><code>KCP</code></div>
+          <div class="path-heading"><h2 id="path-title">مسیر Paqet</h2><button class="btn ghost sm" type="button" data-page-link="relays"><span data-icon="radar"></span>پایش مسیرها</button></div>
           <div class="path-nodes">
             <div class="node node-local"><span class="node-icon" data-icon="server"></span><b>این میزبان</b><small id="path-local" dir="auto">—</small></div>
             <span class="wire" aria-hidden="true"></span>
@@ -216,6 +216,7 @@
           <p class="muted">این بخش جریان TCP سرویس‌هایی مثل Xray را عبور می‌دهد. فایل اتصال حاوی کلید است. برای انتقال فایل و تنظیمات از نشست پنل روی SSH یا شبکهٔ مدیریتی استفاده کنید.</p>
         </details>
         <p id="relay-error" class="error banner" role="alert" hidden></p>
+        <p class="muted route-policy-help">با همان ورودی و IP سرور ایران، می‌توانید چند مسیر به یک سرویس خارج بدهید. «انتخاب هوشمند» علاوه بر خرابی، افت پایدار کیفیت را هم بررسی می‌کند.</p>
         <p id="quic-install-hint" class="muted" hidden>برای فعال کردن مسیر QUIC، نصب‌کننده را روی هر دو میزبان با گزینهٔ <bdi>--with-quic</bdi> اجرا کنید.</p>
         <p id="certificate-job" class="route-result" aria-live="polite" hidden></p>
         <div id="relay-list" class="relay-list"></div>
@@ -402,6 +403,11 @@
       <button class="btn outline sm" id="refresh-network" hidden><span data-icon="network"></span>بازتشخیص تنظیمات شبکه</button>
       <button class="btn outline sm" id="restore" hidden><span data-icon="undo"></span>بازگردانی تنظیمات قبلی</button>
     </div>
+    <section id="core-probe-section" class="advanced probe-box" hidden>
+      <div class="tool-row"><button class="btn outline sm" id="core-probe" type="button"><span data-icon="activity"></span>آزمون پاسخ هستهٔ KCP</button></div>
+      <p class="muted">پاسخ همتای Paqet در بیرون، مستقل از برنامهٔ مقصد و قانون فوروارد</p>
+      <p id="core-probe-result" role="status"></p>
+    </section>
     <p id="route-result" class="route-result" aria-live="polite"></p>
     <section id="probe-section" hidden class="advanced probe-box">
       <label class="field">آزمون پاسخ TLS از ورودی TCP کلاینت<select id="probe-listen" dir="ltr"></select></label>
@@ -462,7 +468,10 @@
         <label class="field">دامنهٔ سرویس در آزمون HTTP(S)<input name="probe_host" placeholder="service.example.org" dir="ltr"></label>
         <label class="field">مسیر آزمون HTTP(S)<input name="probe_path" value="/" dir="ltr"></label>
         <label class="field">سقف اطلاع‌رسانی ماهانه (GiB)<input name="budget" type="number" min="0" max="999999" value="0"></label>
-        <label class="route-check"><input name="automatic" type="checkbox"> جابه‌جایی خودکار پس از دو خطای پیاپی</label>
+        <label class="field wide">سیاست انتخاب مسیر
+          <select name="policy"><option value="manual">دستی</option><option value="failover">جابه‌جایی پس از خرابی</option><option value="adaptive">انتخاب هوشمند با توجه به کیفیت</option></select>
+        </label>
+        <p class="muted hint wide" id="route-policy-hint"></p>
       </div>
       <p class="muted wide route-flow" id="relay-preview" dir="auto"></p>
       <p class="error wide" id="relay-form-error" role="alert" hidden></p>

@@ -28,6 +28,7 @@ CONFIG = Path("/etc/paqet")
 UNITS = Path("/etc/systemd/system")
 STATE = Path("/etc/paqet-panel")
 CORE = Path("/usr/local/bin/paqet")
+PROBE_CORE = Path("/usr/local/bin/paqet-health")
 STATIC = Path(__file__).resolve().parent / "static"
 FONTS = {"/fonts/vazirmatn.woff2": "vazirmatn.woff2", "/fonts/jetbrains-mono.woff2": "jetbrains-mono.woff2"}
 NAME = r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}"
@@ -905,6 +906,26 @@ WantedBy=multi-user.target
                             if row["interface"] and configured else None)
         return {"target": target, **route}
 
+    def probe_core(self, name):
+        config = self.parse_configuration(self.full_config(name)["yaml"])
+        if config.get("role") != "client":
+            raise Problem("آزمون پاسخ KCP برای تونل کلاینت است.")
+        if self.demo:
+            return {"demo": True}
+        if not os.access(PROBE_CORE, os.X_OK):
+            raise Problem("ابزار آزمون هسته نصب نشده است.")
+        report = run(str(PROBE_CORE), "health", "-c", str(self.editor_path(name)), "--count", "3",
+                     "--timeout-ms", "1500", required=False)
+        if report.returncode:
+            raise Problem("آزمون هسته شروع نشد. تنظیمات شبکهٔ کلاینت را بررسی کنید.")
+        result = json.loads(report.stdout)
+        if not isinstance(result, dict) or result.get("schema") != "paqet-health-v1":
+            raise Problem("فرمت پاسخ ابزار آزمون معتبر نیست.")
+        samples = result.get("samples")
+        if not isinstance(samples, list) or len(samples) != 3 or not all(isinstance(item, dict) for item in samples):
+            raise Problem("نمونه‌های آزمون هسته معتبر نیستند.")
+        return {"samples": samples}
+
     def probe_forward(self, name, listen):
         row = next((row for row in self.inventory() if row["name"] == name), {})
         if row.get("role") != "client" or row.get("state") != "active" or not any(
@@ -948,6 +969,7 @@ WantedBy=multi-user.target
             row["backup"] = row["editable"] and self.has_backup(row["name"])
         return {"host": "paqet-demo" if self.demo else socket.gethostname(),
                 "core": self.demo or os.access(CORE, os.X_OK), "demo": self.demo,
+                "core_probe": self.demo or os.access(PROBE_CORE, os.X_OK),
                 "tunnels": rows, "region": self.region(), "topology": coordinates(rows),
                 "sample": {} if self.demo else system_sample()}
 
@@ -1095,9 +1117,9 @@ class Panel(BaseHTTPRequestHandler):
                 created = manager.create(self.payload())
                 logging.info("Provisioned %s", unit(created["name"]))
                 self.answer(201, created)
-            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network|config|pair|forwards|probe|history|rotation|preflight|diagnostic)", path)):
+            elif (match := re.fullmatch(rf"/api/tunnels/({EXISTING_NAME})/(logs|action|tune|restore|diagnose|archive|network|config|pair|forwards|probe|history|rotation|preflight|diagnostic|core-probe)", path)):
                 name, operation = match.groups()
-                if operation not in ("config", "forwards", "pair", "restore", "history", "diagnostic") and name not in manager.names():
+                if operation not in ("config", "forwards", "pair", "restore", "history", "diagnostic", "core-probe") and name not in manager.names():
                     self.answer(404, {"error": "تونل پیدا نشد."})
                 elif operation == "config" and method == "GET":
                     self.answer(200, manager.full_config(name))
@@ -1105,6 +1127,9 @@ class Panel(BaseHTTPRequestHandler):
                     self.answer(200, manager.operations.config_view(name, self.payload() if method == "POST" else None))
                 elif operation == "rotation" and method == "POST":
                     self.answer(201, manager.operations.rotation(name, self.payload()))
+                elif operation == "core-probe" and method == "POST":
+                    self.payload()
+                    self.answer(200, manager.probe_core(name))
                 elif operation == "preflight" and method == "GET":
                     self.answer(200, manager.operations.preflight(name))
                 elif operation == "diagnostic" and method == "GET":
